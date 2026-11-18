@@ -46,7 +46,7 @@ export interface Prop { geos: THREE.BufferGeometry[]; mats: THREE.Material[]; si
 
 /** Poly Haven の glTF：中のメッシュをそれぞれ「変化形」として取り出す（原点に置き直す） */
 export async function loadProp(id: string): Promise<Prop[]> {
-  const gltf = await new GLTFLoader().loadAsync(`models/${id}/${id}.gltf`);
+  const gltf = await new GLTFLoader().loadAsync(`models/${id}/${id}.json`);
   gltf.scene.updateMatrixWorld(true);
   const out: Prop[] = [];
   gltf.scene.traverse((o) => {
