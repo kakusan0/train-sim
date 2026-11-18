@@ -50,8 +50,8 @@ export function buildTrack(group: THREE.Group, mats: Record<string, THREE.Materi
 
   // ---- 道床・枕木・レール ----
   const ballastProf: [number, number][] = [[3.7, -0.8], [2.05, -0.2], [TRACK_GAP - 2.05, -0.2], [TRACK_GAP - 3.7, -0.8]];
-  for (let s0 = S_START; s0 < S_END; s0 += 100) {
-    const s1 = Math.min(S_END + 6, s0 + 100);
+  for (let s0 = S_START; s0 < S_END; s0 += 400) { // 400 m ごとにまとめて描画の回数を減らす
+    const s1 = Math.min(S_END + 6, s0 + 400);
     add(extrudeAlong(ballastProf, s0, s1, 2, { uScale: 0.4, vScale: 0.4 }), M.ballast, false);
     // レール（頭は磨かれた鋼、ほかは錆）
     const head: [number, number][] = [
@@ -97,8 +97,8 @@ export function buildTrack(group: THREE.Group, mats: Record<string, THREE.Materi
     }
   }
   // ケーブルの溝（コンクリートのトラフ）
-  for (let s0 = S_START; s0 < S_END; s0 += 200) {
-    const s1 = Math.min(S_END, s0 + 200);
+  for (let s0 = S_START; s0 < S_END; s0 += 400) {
+    const s1 = Math.min(S_END, s0 + 400);
     const prof: [number, number][] = [[4.05, -0.62], [4.05, -0.5], [3.65, -0.5], [3.65, -0.62]];
     add(extrudeAlong(prof, s0, s1, 4, { uScale: 1, vScale: 0.3 }), M.concrete, false);
   }
@@ -168,7 +168,7 @@ export function buildTrack(group: THREE.Group, mats: Record<string, THREE.Materi
   add(merge(arms), M.steel, true);
   add(merge(ins), M.insulator, false);
   // 電線はいくつかに分けて、見えない所を省く
-  for (let i = 0; i < wires.length; i += 120) add(merge(wires.slice(i, i + 120)), M.wire, false, false);
+  for (let i = 0; i < wires.length; i += 300) add(merge(wires.slice(i, i + 300)), M.wire, false, false);
 
   // ---- 信号機 ----
   const signals: SignalView[] = [];
@@ -178,7 +178,7 @@ export function buildTrack(group: THREE.Group, mats: Record<string, THREE.Materi
     const d = onPlatform(sig.s) ? 2.3 : 2.5;
     g.applyMatrix4(placeAt(sig.s, d, y - 0.5));
     const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 5.3, 10), M.steel);
-    mast.position.y = 2.65; g.add(mast);
+    mast.position.y = 2.65; mast.castShadow = true; g.add(mast);
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.45, 0.25), M.black);
     head.position.set(0, 5.2, 0); g.add(head);
     const lamps = {} as SignalView['lamps'];
@@ -193,7 +193,7 @@ export function buildTrack(group: THREE.Group, mats: Record<string, THREE.Materi
       lamps[c] = mat;
     });
     // 列車は手前（+z 側）から近づくので、灯は +z を向く
-    g.traverse((o) => { o.castShadow = true; });
+    // 細い物は影を落とさない（影の描き直しを軽く）
     group.add(g);
     signals.push({ sig, lamps });
   }
@@ -204,11 +204,11 @@ export function buildTrack(group: THREE.Group, mats: Record<string, THREE.Materi
     const g = new THREE.Group();
     g.applyMatrix4(placeAt(s, d, Math.min(groundH(s, d), at(s).y - 0.6)));
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, height, 8), M.steel);
-    post.position.y = height / 2; g.add(post);
+    post.position.y = height / 2; post.castShadow = true; g.add(post);
     const board = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }));
     board.position.set(0, height + h / 2 - 0.1, 0.05); g.add(board);
     const backB = new THREE.Mesh(new THREE.PlaneGeometry(w, h), M.steel); backB.rotation.y = Math.PI; backB.position.copy(board.position).z -= 0.01; g.add(backB);
-    g.traverse((o) => { o.castShadow = true; });
+    // 細い物は影を落とさない（影の描き直しを軽く）
     group.add(g); signs.push(g);
     return g;
   };

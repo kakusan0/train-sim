@@ -80,3 +80,7 @@ th:first-child, td:first-child { text-align: left; }
 }
 
 @media (pointer: fine) and (min-width: 721px) { #lever { display: none; } #btns { grid-template-columns: repeat(8, 58px); } #btns button { min-height: 44px; font-size: 13px; } }
+#fps { position: absolute; left: 16px; top: 160px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px 10px; font-size: 13px; color: var(--green); }
+#fps[hidden] { display: none; }
+.ghost { min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: transparent; font-weight: 700; cursor: pointer; }
+@media (max-width: 720px) { #fps { left: 8px; top: 128px; } }

@@ -8,6 +8,7 @@ export class Sound {
   bellOn = false; bellT = 0;
   atsT = 0; atsOn = false;
   muted = false;
+  jointBuf: AudioBuffer | null = null;
 
   start() {
     if (this.ctx) { void this.ctx.resume(); return; }
@@ -71,7 +72,7 @@ export class Sound {
     const gap = 2.1 / v;
     for (const w of [0, gap]) {
       const t = ctx.currentTime + w;
-      const src = ctx.createBufferSource(); src.buffer = this.noise(0.08);
+      const src = ctx.createBufferSource(); src.buffer = this.jointBuf ??= this.noise(0.08);
       const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900;
       const g = ctx.createGain(); g.gain.setValueAtTime(Math.min(0.5, 0.08 + v * 0.012), t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
       src.connect(f); f.connect(g); g.connect(this.master); src.start(t);

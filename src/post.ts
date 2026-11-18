@@ -36,28 +36,43 @@ void main(){
 }`,
 };
 
-export interface Post { composer: EffectComposer; grade: ShaderPass; gtao: GTAOPass | null; bloom: UnrealBloomPass; setSize(w: number, h: number): void; }
+/** 陰の暗がりは半分の解像度で計算する（全体の重さを大きく減らす） */
+class HalfGTAOPass extends GTAOPass {
+  setSize(width: number, height: number) { super.setSize(Math.max(1, Math.floor(width / 2)), Math.max(1, Math.floor(height / 2))); }
+}
 
-export function buildPost(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, quality: 'high' | 'low'): Post {
+export interface Post {
+  composer: EffectComposer; grade: ShaderPass; gtao: GTAOPass; bloom: UnrealBloomPass;
+  setSize(w: number, h: number): void;
+  setLevel(o: { gtao: boolean; bloom: boolean; samples: number }): void;
+}
+
+export function buildPost(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): Post {
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
   const composer = new EffectComposer(renderer, rt);
   composer.addPass(new RenderPass(scene, camera));
-  let gtao: GTAOPass | null = null;
-  if (quality === 'high') {
-    gtao = new GTAOPass(scene, camera, size.x, size.y);
-    gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.0, scale: 1.0, samples: 12 });
-    gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
-    gtao.blendIntensity = 0.85;
-    composer.addPass(gtao);
-  }
+  const gtao = new HalfGTAOPass(scene, camera, size.x, size.y);
+  gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.0, scale: 1.0, samples: 12 });
+  gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 8 });
+  gtao.blendIntensity = 0.85;
+  composer.addPass(gtao);
   const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.3, 0.5, 1.05);
   composer.addPass(bloom);
   const grade = new ShaderPass(Grade);
   composer.addPass(grade);
   composer.addPass(new OutputPass());
+  let samples = 4;
   return {
     composer, grade, gtao, bloom,
-    setSize(w, h) { composer.setSize(w, h); },
+    setSize(w, h) { composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(w, h); },
+    setLevel(o) {
+      gtao.enabled = o.gtao;
+      bloom.enabled = o.bloom;
+      if (o.samples !== samples) {
+        samples = o.samples;
+        for (const t of [composer.renderTarget1, composer.renderTarget2]) { t.samples = samples; t.dispose(); }
+      }
+    },
   };
 }

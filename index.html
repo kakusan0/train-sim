@@ -23,6 +23,7 @@
     <div id="ats" hidden>ATS</div>
     <div id="score" class="mono">0 点</div>
   </div>
+  <div id="fps" class="mono" hidden></div>
   <div id="toast" aria-live="polite"></div>
   <div id="sub" aria-live="polite"></div>
   <div id="stopcard" hidden></div>
@@ -51,12 +52,13 @@
         <label><input type="radio" name="mode" value="normal"> ふつう<small>ATS がきびしめ</small></label>
       </fieldset>
       <fieldset><legend>画質</legend>
-        <label><input type="radio" name="q" value="high" checked> 高<small>陰の暗がり・細かい影</small></label>
-        <label><input type="radio" name="q" value="low"> 標準<small>動きの軽さを優先</small></label>
+        <label><input type="radio" name="q" value="auto" checked> 自動（おすすめ）<small>60 FPS を保つよう画質を自動で調整</small></label>
+        <label><input type="radio" name="q" value="high"> 高（固定）<small>陰の暗がり・細かい影。速い GPU 向け</small></label>
+        <label><input type="radio" name="q" value="low"> 標準（固定）<small>動きの軽さを優先</small></label>
       </fieldset>
     </div>
     <button id="startBtn" class="primary" disabled>景色を準備しています…</button>
-    <p class="keys">Z 加速 ・ X ブレーキ ・ N 惰行 ・ Space 非常 ・ O ドア ・ K 喚呼 ・ A 放送 ・ H 警笛 ・ C 視点 ・ W ワイパー</p>
+    <p class="keys">Z 加速 ・ X ブレーキ ・ N 惰行 ・ Space 非常 ・ O ドア ・ K 喚呼 ・ A 放送 ・ H 警笛 ・ C 視点 ・ W ワイパー ・ F FPS 表示</p>
     <p class="credit">木・草・岩・地面などの素材：Poly Haven（CC0）</p>
   </div>
 </div>
@@ -70,6 +72,8 @@
       <li><b>加点</b>：信号や標識の手前で <kbd>K</kbd> 喚呼、駅の手前で <kbd>A</kbd> 車内放送、「笛」の標識で <kbd>H</kbd> 警笛。</li>
     </ol>
     <p class="dim">マウスをドラッグすると、運転台から見回せます。スマホは右のレバーを上下にすべらせます。</p>
+    <p class="dim">FPS（1 秒あたりのコマ数）といまの画質は、<kbd>F</kbd> キーか下のボタンで表示できます。</p>
+    <button type="button" id="fpsBtn" class="ghost">FPS の表示を切り替える</button>
     <button class="primary" data-close>運転にもどる</button>
   </div>
 </div>

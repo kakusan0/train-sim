@@ -211,8 +211,10 @@ function buildStrip(s0: number, s1: number, step: number, mat: THREE.Material): 
 
 export function buildTerrain(group: THREE.Group): THREE.MeshStandardMaterial {
   const mat = terrainMaterial();
-  for (let s0 = -300; s0 < LENGTH + 300; s0 += 100) {
-    const m = buildStrip(s0, s0 + 100, 2.5, mat);
+  // 300 m ごとの帯。トンネルの山のあたりだけは 100 m（影を落とす所を小さくする）
+  for (let s0 = -300, len = 300; s0 < LENGTH + 300; s0 += len) {
+    len = s0 + 300 > TUNNEL.from - 200 && s0 < TUNNEL.to + 200 ? 100 : 300;
+    const m = buildStrip(s0, s0 + len, 2.5, mat);
     // トンネルの山は影を落とす（中に日が差さないように）
     m.castShadow = s0 >= TUNNEL.from - 200 && s0 <= TUNNEL.to + 100;
     group.add(m);

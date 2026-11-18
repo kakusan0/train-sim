@@ -138,7 +138,7 @@ export function buildCab(): Cab {
   void tex;
 
   let wipeT = 0, blink = 0;
-  let last = -1;
+  let last = -1, lastKey = '';
   const update: Cab['update'] = (sim, dt, opts) => {
     // レバーの角度
     const n = sim.notch;
@@ -153,8 +153,16 @@ export function buildCab(): Cab {
     }
     blink += dt;
     // 計器盤は 1 秒に 30 回まで描き直す
-    if (blink - last < 1 / 30) return;
+    // 計器盤は 1 秒に 15 回まで、表示が変わったときだけ描き直す（大きな絵を GPU へ送り直すのは重い）
+    if (blink - last < 1 / 15) return;
     last = blink;
+    const lim = currentLimit(sim);
+    const dd = opts.dist === null ? -1 : opts.dist < 50 ? Math.round(opts.dist * 10) : Math.round(opts.dist);
+    const key = [Math.round(kmh(sim.v) * 2), lim, sim.notch, Math.floor(sim.t), sim.door, sim.ats, Math.round(sim.brake * 40), dd,
+      sim.at, sim.next, opts.guide && opts.dist !== null && opts.dist < 600 ? Math.round(brakingDistance(sim) * 2) : 0,
+      sim.ats === 'warn' ? Math.floor(blink * 3) % 2 : 0].join('|');
+    if (key === lastKey) return;
+    lastKey = key;
     drawPanel(ctx, sim, opts, blink);
     ptex.needsUpdate = true;
   };

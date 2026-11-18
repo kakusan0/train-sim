@@ -6,7 +6,7 @@ import { tex, loadProp, Prop } from './assets';
 import { merge, rng, placeAt, bake } from './geo';
 import { makeHouse, onPlatform } from './track';
 
-export interface Scenery { near: THREE.Object3D[]; update(cam: THREE.Vector3): void; }
+export interface Scenery { near: THREE.Object3D[]; update(cam: THREE.Vector3, o: { grass: number; trees: number; treeShadow: number }): void; }
 
 // ---- 木 ----
 function treeGeometry(r: () => number, kind: 'broad' | 'conifer') {
@@ -121,7 +121,7 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
       trees.push({ x: f.x, y: g.h - 0.2, z: f.z, rot: r() * Math.PI * 2, sc: 0.75 + r() * 0.6, v: (conifer ? 2 : 0) + (r() < 0.5 ? 0 : 1), ad });
     }
   }
-  // 近い木：葉の板。遠い木：絵の板（十字）。100 m ごとの束にして、遠くの束は描かない
+  // 近い木：葉の板（200 m ごとの束）。遠い木：絵の板（十字）を種類ごとに 1 回で描く
   const near: THREE.Object3D[] = [];
   const BUCKET = 200;
   const buckets = new Map<number, T[]>();
@@ -130,9 +130,22 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k)!.push(t);
   }
+  // 近い木がある所では絵の板を消す（頂点シェーダーで、木ごとにカメラからの距離を見る）
+  const uNearR = { value: 380 };
   const imM = imps.map((im) => {
     const m = new THREE.MeshStandardMaterial({ map: im.texture, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.9 });
     m.alphaToCoverage = true;
+    m.userData.key = 'impostor';
+    m.userData.patch = (sh: THREE.WebGLProgramParametersWithUniforms) => {
+      sh.uniforms.uNearR = uNearR;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aNear;\nuniform float uNearR;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+#ifdef USE_INSTANCING
+  vec3 ip = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  if (aNear > 0.5 && distance(ip, cameraPosition) < uNearR) transformed *= 0.0;
+#endif`);
+    };
     return m;
   });
   const cross = imps.map((im) => {
@@ -143,39 +156,41 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
     for (let k = 0; k < nor.count; k++) nor.setXYZ(k, 0, 1, 0);
     return g;
   });
+  const NEAR_AD = 110;
   const mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), sv = new THREE.Vector3(), pv = new THREE.Vector3();
-  const lods: { obj: THREE.Object3D; center: THREE.Vector3; nearOnly: boolean; range?: number }[] = [];
+  const compose = (t: T) => { q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot); sv.setScalar(t.sc); pv.set(t.x, t.y, t.z); return mtx.compose(pv, q, sv); };
+  for (let v = 0; v < 4; v++) {
+    const list = trees.filter((t) => t.v === v);
+    if (!list.length) continue;
+    const geo = cross[v].clone();
+    const im = new THREE.InstancedMesh(geo, imM[v], list.length);
+    const nearA = new Float32Array(list.length);
+    list.forEach((t, i) => { im.setMatrixAt(i, compose(t)); nearA[i] = t.ad < NEAR_AD ? 1 : 0; });
+    geo.setAttribute('aNear', new THREE.InstancedBufferAttribute(nearA, 1));
+    im.receiveShadow = true; im.castShadow = false;
+    im.computeBoundingSphere();
+    group.add(im);
+  }
+  type Lod = { obj: THREE.Object3D; center: THREE.Vector3; kind: 'trees' | 'props'; casters?: THREE.Mesh[] };
+  const lods: Lod[] = [];
   for (const [k, list] of buckets) {
     const center = at(k * BUCKET + BUCKET / 2);
-    const nearG = new THREE.Group(), farG = new THREE.Group();
+    const nearG = new THREE.Group();
+    const casters: THREE.Mesh[] = [];
     for (let v = 0; v < 4; v++) {
-      const nearL = list.filter((t) => t.v === v && t.ad < 110);
-      const farL = list.filter((t) => t.v === v);
-      if (nearL.length) {
-        const leaves = new THREE.InstancedMesh(variants[v].leaves, variants[v].lm, nearL.length);
-        const trunks = new THREE.InstancedMesh(variants[v].trunk, trunkM, nearL.length);
-        nearL.forEach((t, i) => {
-          q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot); sv.setScalar(t.sc); pv.set(t.x, t.y, t.z);
-          mtx.compose(pv, q, sv); leaves.setMatrixAt(i, mtx); trunks.setMatrixAt(i, mtx);
-        });
-        leaves.castShadow = trunks.castShadow = true; leaves.receiveShadow = trunks.receiveShadow = true;
-        leaves.computeBoundingSphere(); trunks.computeBoundingSphere();
-        nearG.add(leaves, trunks);
-      }
-      if (farL.length) {
-        const im = new THREE.InstancedMesh(cross[v], imM[v], farL.length);
-        farL.forEach((t, i) => {
-          q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot); sv.setScalar(t.sc); pv.set(t.x, t.y, t.z);
-          mtx.compose(pv, q, sv); im.setMatrixAt(i, mtx);
-        });
-        im.receiveShadow = true; im.castShadow = false;
-        im.computeBoundingSphere();
-        farG.add(im);
-      }
+      const nearL = list.filter((t) => t.v === v && t.ad < NEAR_AD);
+      if (!nearL.length) continue;
+      const leaves = new THREE.InstancedMesh(variants[v].leaves, variants[v].lm, nearL.length);
+      const trunks = new THREE.InstancedMesh(variants[v].trunk, trunkM, nearL.length);
+      nearL.forEach((t, i) => { compose(t); leaves.setMatrixAt(i, mtx); trunks.setMatrixAt(i, mtx); });
+      leaves.castShadow = trunks.castShadow = true; leaves.receiveShadow = trunks.receiveShadow = true;
+      leaves.computeBoundingSphere(); trunks.computeBoundingSphere();
+      nearG.add(leaves, trunks);
+      casters.push(leaves, trunks);
     }
-    group.add(nearG, farG);
-    lods.push({ obj: nearG, center: new THREE.Vector3(center.x, center.y, center.z), nearOnly: true });
-    lods.push({ obj: farG, center: new THREE.Vector3(center.x, center.y, center.z), nearOnly: false });
+    if (!casters.length) continue;
+    group.add(nearG);
+    lods.push({ obj: nearG, center: new THREE.Vector3(center.x, center.y, center.z), kind: 'trees', casters });
   }
 
   // ---- 草・低木・岩（線路ぎわ） ----
@@ -186,8 +201,15 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
     const sm = m as THREE.MeshStandardMaterial;
     if (id.startsWith('grass') || id.startsWith('weed')) sm.color.multiplyScalar(0.92);
   }
-  props.rock = makeRocks();
-  const PB = 100;
+  // 変化形は 3 つまで（面の数が中くらいのもの）。束ごとの描画命令を減らす
+  for (const id of ids) {
+    const tri = (p: Prop) => (p.geos[0].index ? p.geos[0].index.count : p.geos[0].getAttribute('position').count) / 3;
+    const sorted = [...props[id]].sort((x, y) => tri(x) - tri(y));
+    const mid = Math.floor(sorted.length / 2);
+    props[id] = sorted.slice(Math.max(0, mid - 1), Math.max(0, mid - 1) + 3);
+  }
+  props.rock = makeRocks().slice(0, 3);
+  const PB = 150;
   const propBuckets = new Map<number, { id: string; vi: number; m: THREE.Matrix4 }[]>();
   const put = (s: number, id: string, d: number, scale: number, yaw: number) => {
     const f = at(s, d);
@@ -243,16 +265,20 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
     }
     group.add(g);
     const c = at(k * PB + PB / 2);
-    lods.push({ obj: g, center: new THREE.Vector3(c.x, c.y, c.z), nearOnly: true, range: 190 });
+    lods.push({ obj: g, center: new THREE.Vector3(c.x, c.y, c.z), kind: 'props' });
   }
 
   // ---- 家並み ----
   buildTowns(group, r);
 
-  const update = (cam: THREE.Vector3) => {
+  const update: Scenery['update'] = (cam, o) => {
+    uNearR.value = o.trees;
     for (const l of lods) {
       const dist = l.center.distanceTo(cam);
-      l.obj.visible = dist < (l.range ?? (l.nearOnly ? 380 : 2600));
+      if (l.kind === 'props') { l.obj.visible = dist < o.grass; continue; }
+      l.obj.visible = dist < o.trees + 40;
+      const cast = dist < o.treeShadow;
+      for (const m of l.casters!) m.castShadow = cast;
     }
   };
   return { near, update };
@@ -271,7 +297,7 @@ function nearestS(t: { x: number; z: number }): number {
 
 function buildTowns(group: THREE.Group, r: () => number) {
   const buckets = new Map<number, THREE.Object3D[]>();
-  const addB = (s: number, o: THREE.Object3D) => { const k = Math.floor(s / 300); if (!buckets.has(k)) buckets.set(k, []); buckets.get(k)!.push(o); };
+  const addB = (s: number, o: THREE.Object3D) => { const k = Math.floor(s / 600); if (!buckets.has(k)) buckets.set(k, []); buckets.get(k)!.push(o); };
   for (let s = -250; s < LENGTH + 200; s += 9) {
     const wz = zoneW(s);
     if (wz.town < 0.5) continue;

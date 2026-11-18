@@ -13,6 +13,7 @@ import { setAniso, texturesReady, tex } from './world/assets';
 import { buildCab, Cab } from './cab';
 import { makeTrain, TrainView } from './train';
 import { buildPost, Post } from './post';
+import { Governor, LEVELS, startLevel } from './perf';
 import { Sound } from './audio';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -21,7 +22,7 @@ const params = new URLSearchParams(location.search);
 // ---- 描画の土台 ----
 const canvas = $<HTMLCanvasElement>('gl');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.info.autoReset = false;
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -175,7 +176,7 @@ addEventListener('keydown', (e) => {
   const map: Record<string, () => void> = {
     KeyZ: () => stepNotch(sim, 1), KeyX: () => stepNotch(sim, -1), KeyN: () => setNotch(sim, 0),
     Space: () => act('eb'), KeyO: () => act('door'), KeyK: () => act('call'), KeyA: () => act('announce'),
-    KeyH: () => act('horn'), KeyC: () => act('view'), KeyW: () => act('wiper'), KeyM: () => sound.setMute(!sound.muted),
+    KeyF: () => toggleFps(), KeyH: () => act('horn'), KeyC: () => act('view'), KeyW: () => act('wiper'), KeyM: () => sound.setMute(!sound.muted),
     Slash: () => act('help'), Escape: () => (paused ? closeHelp() : openHelp()),
   };
   const f = map[e.code];
@@ -318,6 +319,7 @@ function showResult() {
 function openHelp() { paused = true; $('help').hidden = false; }
 function closeHelp() { paused = false; $('help').hidden = true; }
 $('help').querySelector('[data-close]')!.addEventListener('click', closeHelp);
+$('fpsBtn').addEventListener('click', () => toggleFps());
 
 function startRun() {
   const mode = (document.querySelector<HTMLInputElement>('input[name=mode]:checked')?.value ?? 'easy') as Mode;
@@ -374,8 +376,9 @@ let exposure = 1;
 const clock = new THREE.Clock();
 const camPos = new THREE.Vector3();
 let frame = 0;
-function loop() {
+function loop(now = performance.now()) {
   requestAnimationFrame(loop);
+  const t0 = performance.now();
   const dt = Math.min(0.1, clock.getDelta());
   uTime.value += dt;
   if (running && !paused) {
@@ -407,7 +410,8 @@ function loop() {
   cab.group.visible = view === 'cab';
   if (view === 'ext') myTrain.place(sim.s, 0);
   cab.update(sim, dt, { wipers, guide: sim.mode === 'easy', dist: sim.at >= 0 ? null : STATIONS[sim.next].stop - sim.s });
-  scenery.update(camPos);
+  const L = LEVELS[gov.level];
+  scenery.update(camPos, L);
   for (const im of track.sleepers) im.visible = im.boundingSphere!.center.distanceTo(camPos) < 450;
   post.grade.uniforms.uSpeed.value = view === 'cab' ? Math.min(1, Math.max(0, (sim.v - 8) / 20)) : 0;
   if (running) updateHud();
@@ -415,10 +419,49 @@ function loop() {
   if (subT > 0 && (subT -= dt) <= 0) $('sub').classList.remove('show');
   if (cardT > 0 && (cardT -= dt) <= 0) $('stopcard').hidden = true;
   csm.update();
+  // いちばん遠い段の影は 2 コマに 1 回だけ描き直す
+  const farLight = csm.lights[csm.lights.length - 1];
+  farLight.shadow.autoUpdate = false;
+  farLight.shadow.needsUpdate = frame % 2 === 0;
   renderer.info.reset();
   post.composer.render(dt);
   frame++;
-  (window as unknown as { __ts: unknown }).__ts = { sim, frame, ready: true, view, calls: renderer.info.render.calls, tris: renderer.info.render.triangles };
+  const js = performance.now() - t0;
+  jsAvg += (js - jsAvg) * 0.05;
+  // 自動調整：実際のコマの間隔で判断する
+  const changed = gov.frame(now - lastNow);
+  lastNow = now;
+  if (changed !== null) applyLevel(changed);
+  if (showFps && frame % 15 === 0) fpsEl.textContent = `${Math.round(gov.fps)} FPS・画質 ${LEVELS.length - gov.level}/${LEVELS.length}${gov.auto ? '（自動）' : ''}`;
+  (window as unknown as { __ts: unknown }).__ts = { sim, frame, ready: true, view, calls: renderer.info.render.calls, tris: renderer.info.render.triangles, js: Math.round(jsAvg * 10) / 10, level: gov.level };
+}
+
+// ---- 画質の段 ----
+let gov = new Governor(startLevel(matchMedia('(pointer: coarse)').matches, Math.min(screen.width, screen.height)));
+let lastNow = performance.now(), jsAvg = 0;
+let showFps = params.has('fps');
+const fpsEl = $('fps');
+fpsEl.hidden = !showFps;
+function toggleFps() { showFps = !showFps; fpsEl.hidden = !showFps; }
+function applyLevel(n: number) {
+  const L = LEVELS[n];
+  renderer.setPixelRatio(Math.min(devicePixelRatio, L.dpr));
+  renderer.setSize(innerWidth, innerHeight);
+  post.setSize(innerWidth, innerHeight);
+  post.setLevel(L);
+  for (const l of csm.lights) {
+    if (l.shadow.mapSize.x !== L.shadowSize) {
+      l.shadow.mapSize.set(L.shadowSize, L.shadowSize);
+      l.shadow.map?.dispose();
+      (l.shadow as { map: THREE.WebGLRenderTarget | null }).map = null;
+    }
+  }
+  if (csm.maxFar !== L.shadowFar) { csm.maxFar = L.shadowFar; csm.updateFrustums(); }
+}
+function chooseQuality(q: string) {
+  const start = startLevel(matchMedia('(pointer: coarse)').matches, Math.min(screen.width, screen.height));
+  gov = q === 'high' ? new Governor(0, false) : q === 'low' ? new Governor(3, false) : new Governor(start, true);
+  applyLevel(gov.level);
 }
 
 addEventListener('resize', () => {
@@ -435,14 +478,9 @@ addEventListener('resize', () => {
   await build((p) => { pct.textContent = p; });
   scene.environment = pmrem.fromEquirectangular(skyTex).texture;
   scene.environmentIntensity = 1;
-  const quality = (params.get('q') as 'high' | 'low') ?? 'high';
-  post = buildPost(renderer, scene, camera, quality);
-  const reb = () => {
-    const q = (document.querySelector<HTMLInputElement>('input[name=q]:checked')?.value ?? 'high') as 'high' | 'low';
-    post = buildPost(renderer, scene, camera, q);
-    renderer.setPixelRatio(q === 'high' ? Math.min(devicePixelRatio, 1.75) : Math.min(devicePixelRatio, 1));
-    renderer.setSize(innerWidth, innerHeight); post.setSize(innerWidth, innerHeight);
-  };
+  post = buildPost(renderer, scene, camera);
+  chooseQuality(params.get('q') ?? 'auto');
+  const reb = () => chooseQuality(document.querySelector<HTMLInputElement>('input[name=q]:checked')?.value ?? 'auto');
   $('loading').remove();
   const btn = $<HTMLButtonElement>('startBtn');
   btn.disabled = false; btn.textContent = '運転をはじめる';
