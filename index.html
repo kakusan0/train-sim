@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ひかり野線 運転士</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&family=Share+Tech+Mono&display=swap">
+<link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud" hidden>
+  <div id="info">
+    <div class="row"><span class="k">時刻</span><b id="clock" class="mono">07:00:00</b></div>
+    <div class="row"><span class="k" id="nextK">次は</span><b id="nextSt">浜田</b><span class="mono dim" id="nextT">07:03:40</span></div>
+    <div class="row"><span class="k">停止位置まで</span><b id="dist" class="mono">---</b></div>
+    <div class="row"><span class="k">速度</span><b id="speed" class="mono big">0</b><span class="dim">km/h</span><span class="k">制限</span><b id="limit" class="mono lim">45</b></div>
+  </div>
+  <div id="state">
+    <div id="notch" class="mono">B4</div>
+    <div id="door">戸閉 ●</div>
+    <div id="ats" hidden>ATS</div>
+    <div id="score" class="mono">0 点</div>
+  </div>
+  <div id="toast" aria-live="polite"></div>
+  <div id="sub" aria-live="polite"></div>
+  <div id="stopcard" hidden></div>
+  <div id="pad">
+    <div id="lever" aria-label="マスコン：上へすべらせると加速、下へすべらせるとブレーキ" role="slider" aria-valuemin="-9" aria-valuemax="5" tabindex="0"><div id="knob">B4</div></div>
+    <div id="btns">
+      <button data-act="door">ドア<small>O</small></button>
+      <button data-act="call">喚呼<small>K</small></button>
+      <button data-act="announce">放送<small>A</small></button>
+      <button data-act="horn">警笛<small>H</small></button>
+      <button data-act="wiper">ワイパー<small>W</small></button>
+      <button data-act="view">視点<small>C</small></button>
+      <button data-act="eb" class="eb">非常<small>Space</small></button>
+      <button data-act="help">操作<small>?</small></button>
+    </div>
+  </div>
+</div>
+<div id="title" class="screen">
+  <div class="card">
+    <p class="eyebrow">ひかり野線　潮見台 → 山ノ口</p>
+    <h1>ひかり野線 運転士</h1>
+    <p class="lead">海辺の町から山あいの終点まで、4 駅 5.8 km。時刻表どおりに走り、停止位置にぴたりと止めましょう。</p>
+    <div class="opts">
+      <fieldset><legend>むずかしさ</legend>
+        <label><input type="radio" name="mode" value="easy" checked> かんたん<small>止まる位置の予測を表示</small></label>
+        <label><input type="radio" name="mode" value="normal"> ふつう<small>ATS がきびしめ</small></label>
+      </fieldset>
+      <fieldset><legend>画質</legend>
+        <label><input type="radio" name="q" value="high" checked> 高<small>陰の暗がり・細かい影</small></label>
+        <label><input type="radio" name="q" value="low"> 標準<small>動きの軽さを優先</small></label>
+      </fieldset>
+    </div>
+    <button id="startBtn" class="primary" disabled>景色を準備しています…</button>
+    <p class="keys">Z 加速 ・ X ブレーキ ・ N 惰行 ・ Space 非常 ・ O ドア ・ K 喚呼 ・ A 放送 ・ H 警笛 ・ C 視点 ・ W ワイパー</p>
+    <p class="credit">木・草・岩・地面などの素材：Poly Haven（CC0）</p>
+  </div>
+</div>
+<div id="help" class="screen" hidden>
+  <div class="card">
+    <h2>運転のしかた</h2>
+    <ol>
+      <li><b>発車</b>：時刻表の発車時刻が近づいたら <kbd>O</kbd> でドアを閉める。戸閉の灯がついて、出発信号が青になったら <kbd>Z</kbd> で加速。</li>
+      <li><b>走行</b>：制限速度（白い標識・黄色の信号は 45）を守る。超えると ATS のベルが鳴り、続けるとブレーキがかかって減点。</li>
+      <li><b>停車</b>：<kbd>X</kbd> でブレーキを段階的に。黄色の「2」の目印に先頭を合わせて止め、<kbd>O</kbd> でドアを開ける。</li>
+      <li><b>加点</b>：信号や標識の手前で <kbd>K</kbd> 喚呼、駅の手前で <kbd>A</kbd> 車内放送、「笛」の標識で <kbd>H</kbd> 警笛。</li>
+    </ol>
+    <p class="dim">マウスをドラッグすると、運転台から見回せます。スマホは右のレバーを上下にすべらせます。</p>
+    <button class="primary" data-close>運転にもどる</button>
+  </div>
+</div>
+<div id="result" class="screen" hidden></div>
+<div id="loading">景色を作っています… <span id="loadPct"></span></div>
+<script type="module" src="./src/main.ts"></script>
+</body>
+</html>
