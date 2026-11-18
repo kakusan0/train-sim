@@ -330,6 +330,7 @@ function startRun() {
   spawned.clear();
   melodyPlayed = -1;
   running = true; paused = false;
+  checkRotate();
   $('hud').hidden = false;
   $('title').hidden = true;
   subtitle('潮見台・発車 07:00:45。発車メロディのあと、O でドアを閉めます');
@@ -381,7 +382,7 @@ function loop(now = performance.now()) {
   const t0 = performance.now();
   const dt = Math.min(0.1, clock.getDelta());
   uTime.value += dt;
-  if (running && !paused) {
+  if (running && !paused && !needRotate) {
     const sub = Math.ceil(dt / (1 / 120));
     for (let i = 0; i < sub; i++) step(sim, dt / sub);
     // キーを押し続けると段を進める
@@ -436,6 +437,26 @@ function loop(now = performance.now()) {
   (window as unknown as { __ts: unknown }).__ts = { sim, frame, ready: true, view, calls: renderer.info.render.calls, tris: renderer.info.render.triangles, js: Math.round(jsAvg * 10) / 10, level: gov.level };
 }
 
+// ---- スマホは横向きで遊ぶ ----
+const isPhone = () => matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) <= 900;
+/** 全画面にして横向きに固定する（Android の Chrome など）。できない端末（iPhone の Safari など）は案内を出す */
+async function forceLandscape() {
+  if (!isPhone()) return;
+  try {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    const o = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
+    if (o?.lock) await o.lock('landscape');
+  } catch { /* 固定できない端末では、縦のときに案内を出して止めておく */ }
+  checkRotate();
+}
+let needRotate = false;
+function checkRotate() {
+  needRotate = running && isPhone() && innerHeight > innerWidth;
+  $('rotate').hidden = !needRotate;
+}
+addEventListener('resize', checkRotate);
+screen.orientation?.addEventListener?.('change', checkRotate);
+
 // ---- 画質の段 ----
 let gov = new Governor(startLevel(matchMedia('(pointer: coarse)').matches, Math.min(screen.width, screen.height)));
 let lastNow = performance.now(), jsAvg = 0;
@@ -465,6 +486,7 @@ function chooseQuality(q: string) {
 }
 
 addEventListener('resize', () => {
+  if (!post) return; // 読み込み中
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   post.setSize(innerWidth, innerHeight);
@@ -484,7 +506,7 @@ addEventListener('resize', () => {
   $('loading').remove();
   const btn = $<HTMLButtonElement>('startBtn');
   btn.disabled = false; btn.textContent = '運転をはじめる';
-  btn.addEventListener('click', () => { sound.start(); reb(); startRun(); });
+  btn.addEventListener('click', () => { sound.start(); void forceLandscape(); reb(); startRun(); });
   if (params.has('auto')) startRun();
   placeRig(sim, 0);
   loop();

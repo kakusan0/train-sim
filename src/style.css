@@ -84,3 +84,19 @@ th:first-child, td:first-child { text-align: left; }
 #fps[hidden] { display: none; }
 .ghost { min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: transparent; font-weight: 700; cursor: pointer; }
 @media (max-width: 720px) { #fps { left: 8px; top: 128px; } }
+#rotate { z-index: 50; background: rgba(11,13,18,0.94); }
+.rot-icon { width: 54px; height: 90px; margin: 0 auto; border: 4px solid var(--cyan); border-radius: 12px; animation: rot 2.2s ease-in-out infinite; }
+@keyframes rot { 0%, 25% { transform: rotate(0deg); } 55%, 100% { transform: rotate(90deg); } }
+@media (prefers-reduced-motion: reduce) { .rot-icon { animation: none; transform: rotate(90deg); } }
+/* スマホの横向き（高さが低い） */
+@media (max-height: 500px) and (pointer: coarse) {
+  #info { left: 8px; top: 8px; min-width: 0; padding: 6px 10px; gap: 2px; }
+  #info b { font-size: 13px; } #info .big { font-size: 20px; } #info .k { font-size: 11px; }
+  #state { right: 8px; top: 8px; gap: 4px; } #state > div { padding: 3px 10px; } #notch { font-size: 20px; min-width: 60px; }
+  #pad { right: 8px; bottom: 8px; left: auto; gap: 8px; }
+  #btns { grid-template-columns: repeat(4, 56px); gap: 4px; }
+  #btns button { min-height: 44px; font-size: 12px; }
+  #lever { position: fixed; left: 8px; bottom: 8px; height: min(230px, calc(100vh - 130px)); width: 60px; } /* 左手の親指でレバー、右手でボタン */
+  #sub { font-size: 13px; top: 8px; max-width: 46vw; }
+  #fps { left: 8px; top: 112px; }
+}
