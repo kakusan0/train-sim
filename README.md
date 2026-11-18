@@ -19,3 +19,6 @@ npm run build
 
 ## 素材
 木の葉・草・低木・地面・岩などのテクスチャと 3D モデルは [Poly Haven](https://polyhaven.com/)（CC0）。
+
+## 公開
+Cloudflare の Workers Builds でこのリポジトリをつなぐと、main への push ごとに公開されます（ビルドコマンド `npm run build`、配信は `wrangler.jsonc` の `dist`）。
