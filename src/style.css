@@ -11,20 +11,8 @@ canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block
 button { font: inherit; color: inherit; }
 
 #hud { position: fixed; inset: 0; pointer-events: none; }
-#info { position: absolute; left: 16px; top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; display: grid; gap: 4px; min-width: 230px; backdrop-filter: blur(6px); }
-#info .row { display: flex; gap: 8px; align-items: baseline; }
-#info .k { font-size: 12px; color: var(--dim); }
-#info b { font-size: 17px; }
-#info .big { font-size: 26px; color: var(--amber); }
-#info .lim { background: #fff; color: #111; border-radius: 4px; padding: 0 6px; }
-#state { position: absolute; right: 16px; top: 16px; display: grid; gap: 6px; justify-items: end; }
-#state > div { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 6px 12px; }
-#notch { font-size: 26px; min-width: 84px; text-align: center; }
-#notch.p { color: var(--green); } #notch.b { color: var(--amber); } #notch.eb { color: #fff; background: var(--red) !important; }
-#door.closed { color: var(--amber); }
 #ats { color: #fff; background: var(--red) !important; font-weight: 900; animation: blink 0.5s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0.35; } }
-#score { font-size: 18px; }
 #toast { position: absolute; left: 50%; top: 26%; transform: translateX(-50%); font-size: clamp(26px, 5vw, 48px); font-weight: 900; text-shadow: 0 2px 12px rgba(0,0,0,0.8); opacity: 0; transition: opacity 0.25s; white-space: nowrap; }
 #toast.show { opacity: 1; }
 #toast .pts { font-size: 0.5em; color: var(--green); margin-left: 10px; }
@@ -67,11 +55,7 @@ th:first-child, td:first-child { text-align: left; }
 .rank { font-size: 64px; font-weight: 900; color: var(--amber); line-height: 1; }
 
 @media (max-width: 720px) {
-  #info { left: 8px; top: 8px; min-width: 0; padding: 8px 10px; }
-  #info b { font-size: 14px; } #info .big { font-size: 20px; }
-  #state { right: 8px; top: 8px; }
-  #notch { font-size: 20px; min-width: 64px; }
-  #pad { right: 8px; bottom: 8px; left: 8px; justify-content: space-between; flex-direction: row-reverse; }
+          #pad { right: 8px; bottom: 8px; left: 8px; justify-content: space-between; flex-direction: row-reverse; }
   #btns { grid-template-columns: repeat(4, minmax(0, 1fr)); flex: 1; }
   #btns button { min-height: 46px; font-size: 13px; }
   #lever { height: 200px; width: 64px; }
@@ -90,13 +74,76 @@ th:first-child, td:first-child { text-align: left; }
 @media (prefers-reduced-motion: reduce) { .rot-icon { animation: none; transform: rotate(90deg); } }
 /* スマホの横向き（高さが低い） */
 @media (max-height: 500px) and (pointer: coarse) {
-  #info { left: 8px; top: 8px; min-width: 0; padding: 6px 10px; gap: 2px; }
-  #info b { font-size: 13px; } #info .big { font-size: 20px; } #info .k { font-size: 11px; }
-  #state { right: 8px; top: 8px; gap: 4px; } #state > div { padding: 3px 10px; } #notch { font-size: 20px; min-width: 60px; }
-  #pad { right: 8px; bottom: 8px; left: auto; gap: 8px; }
+        #pad { right: 8px; bottom: 8px; left: auto; gap: 8px; }
   #btns { grid-template-columns: repeat(4, 56px); gap: 4px; }
   #btns button { min-height: 44px; font-size: 12px; }
   #lever { position: fixed; left: 8px; bottom: 8px; height: min(230px, calc(100vh - 130px)); width: 60px; } /* 左手の親指でレバー、右手でボタン */
   #sub { font-size: 13px; top: 8px; max-width: 46vw; }
   #fps { left: 8px; top: 112px; }
 }
+
+/* ---- HUD：左下に速度計、右上に次の停車駅 ---- */
+.hudtext { text-shadow: 0 1px 3px rgba(0,0,0,0.85); }
+#topbar { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); display: flex; gap: 6px; align-items: baseline; padding: 4px 14px; border-radius: 999px; background: rgba(8,10,14,0.45); text-shadow: 0 1px 3px #000; }
+#topbar .k { font-size: 12px; color: var(--dim); }
+#topbar b { font-size: 20px; color: #fff; }
+#stopinfo { position: absolute; right: 18px; top: 14px; width: 250px; display: grid; gap: 8px; justify-items: end; text-shadow: 0 1px 4px rgba(0,0,0,0.9); }
+#stopinfo .head { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
+#stopinfo .badge { width: 58px; height: 58px; border-radius: 50%; background: rgba(8,10,14,0.55); border: 2px solid rgba(255,255,255,0.85); display: grid; place-items: center; align-content: center; gap: 0; color: #fff; }
+#stopinfo .badge b { font-size: 11px; line-height: 1; }
+#stopinfo .what { display: grid; gap: 2px; text-align: right; }
+#stopinfo .what > b { font-size: 20px; font-style: italic; }
+#stopinfo .what > span { font-size: 15px; display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+#stopinfo .cars { font-style: normal; font-size: 12px; background: #E08A2B; color: #111; border-radius: 4px; padding: 1px 6px; text-shadow: none; font-weight: 700; }
+#stopinfo .clock { display: flex; gap: 6px; align-items: center; color: #fff; }
+#stopinfo .clock b { font-size: 24px; }
+#timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; position: relative; }
+#timeline li { display: flex; gap: 10px; align-items: baseline; justify-content: flex-end; font-size: 13px; }
+#timeline li b { font-size: 18px; color: #fff; }
+#timeline li small { font-size: 11px; }
+#timeline li::after { content: ''; width: 9px; height: 9px; border-radius: 50%; border: 2px solid #fff; align-self: center; }
+#timeline li:first-child::after { background: #fff; }
+
+#meter { position: absolute; left: 14px; bottom: 12px; display: grid; gap: 4px; text-shadow: 0 1px 3px rgba(0,0,0,0.9); }
+#meter .rows { display: grid; gap: 1px; font-size: 13px; }
+#meter .rows span { display: flex; gap: 8px; align-items: baseline; }
+#meter .rows i { font-style: normal; color: var(--dim); font-size: 11px; min-width: 52px; }
+#meter .rows b { color: #fff; } #meter .rows b.late { color: var(--red); }
+#meter .gauges { display: flex; align-items: flex-end; gap: 6px; }
+#speedo { width: 220px; height: auto; display: block; }
+#notchCol { display: grid; grid-template-columns: 14px; gap: 2px; align-content: end; position: relative; padding-bottom: 16px; }
+#notchCol i { width: 14px; height: 7px; border-radius: 2px; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.25); }
+#notchCol i.p.on { background: var(--green); } #notchCol i.n.on { background: #fff; } #notchCol i.b.on { background: var(--amber); } #notchCol i.eb.on { background: var(--red); }
+#notchCol span { position: absolute; bottom: 0; left: -2px; font-size: 10px; color: var(--dim); white-space: nowrap; }
+#meter .bars { display: grid; grid-template-columns: 12px 12px; grid-template-rows: 130px auto; gap: 2px 6px; font-size: 10px; color: var(--dim); }
+#meter .bar { position: relative; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.3); border-radius: 2px; overflow: hidden; }
+#meter .bar i { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; transition: height 0.15s; }
+#meter .bar.mr i { background: #9fd3ff; }
+#meter .status { display: flex; gap: 6px; font-size: 12px; }
+#meter .status > span { padding: 2px 8px; border-radius: 6px; background: rgba(8,10,14,0.5); }
+#notch { font-size: 15px; min-width: 46px; text-align: center; }
+#notch.p { color: var(--green); } #notch.b { color: var(--amber); } #notch.eb { color: #fff; background: var(--red) !important; }
+#door.closed { color: var(--amber); }
+#ats { color: #fff; background: var(--red) !important; font-weight: 900; animation: blink 0.5s steps(2) infinite; }
+
+#keys { position: absolute; right: 16px; bottom: 14px; display: grid; gap: 2px; pointer-events: auto; }
+#keys button { background: none; border: none; padding: 2px 4px; display: flex; gap: 10px; align-items: center; justify-content: flex-end; font-size: 13px; color: #fff; text-shadow: 0 1px 3px #000; cursor: pointer; border-radius: 6px; }
+#keys button:hover, #keys button:focus-visible { background: rgba(255,255,255,0.12); }
+#keys kbd { color: var(--amber); border: none; font-size: 12px; padding: 0; min-width: 40px; text-align: right; }
+#sub { top: auto; bottom: 18px; }
+
+/* マウスでは画面のボタン類を隠し、キーの案内だけ。指で操作する端末はレバーとボタン */
+@media (pointer: fine) { #pad { display: none; } }
+@media (pointer: coarse) {
+  #keys { display: none; }
+  #pad { right: 8px; bottom: 8px; left: auto; flex-direction: row; gap: 8px; }
+  #lever { position: relative; left: auto; bottom: auto; }
+  #sub { bottom: auto; top: 46px; }
+}
+@media (max-height: 500px) and (pointer: coarse) {
+  #meter { transform: scale(0.72); transform-origin: left bottom; left: 6px; bottom: 4px; }
+  #stopinfo { transform: scale(0.8); transform-origin: right top; right: 8px; top: 6px; }
+  #lever { position: relative; left: auto; bottom: auto; height: min(200px, calc(100vh - 120px)); }
+  #btns { grid-template-columns: repeat(4, 52px); }
+}
+@media (max-width: 720px) and (pointer: coarse) { #meter { transform: scale(0.72); transform-origin: left bottom; } }

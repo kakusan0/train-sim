@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CSM } from 'three/examples/jsm/csm/CSM.js';
-import { at, STATIONS, TUNNEL, CROSSINGS, TRACK_GAP, TRAIN_LEN, fmtTime, curvatureAt, SIGNALS } from './route';
+import { at, gradeAt, STATIONS, TUNNEL, CROSSINGS, TRACK_GAP, TRAIN_LEN, fmtTime, curvatureAt, SIGNALS } from './route';
 import {
   createSim, step, stepNotch, setNotch, toggleDoor, pointCall, announce, horn, kmh, currentLimit, notchLabel, EB,
   aspectOf, Sim, Mode, legTotal, totalScore, rank, SimEvent,
@@ -183,7 +183,7 @@ addEventListener('keydown', (e) => {
   if (f) { e.preventDefault(); sound.start(); f(); }
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
-document.querySelectorAll<HTMLButtonElement>('#btns button').forEach((b) => b.addEventListener('click', () => act(b.dataset.act!)));
+document.querySelectorAll<HTMLButtonElement>('#btns button, #keys button').forEach((b) => b.addEventListener('click', () => act(b.dataset.act!)));
 
 // 見回し（ドラッグ）
 let drag: { x: number; y: number } | null = null;
@@ -266,17 +266,76 @@ function handleEvents(evs: SimEvent[]) {
 }
 
 let melodyPlayed = -1;
+// ---- 画面の表示（HUD） ----
+const speedo = $<HTMLCanvasElement>('speedo').getContext('2d')!;
+const notchCol = $('notchCol');
+const NOTCHES = [5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -5, -6, -7, -8, EB];
+notchCol.innerHTML = NOTCHES.map((n) => `<i data-n="${n}" class="${n > 0 ? 'p' : n === 0 ? 'n' : n === EB ? 'eb' : 'b'}"></i>`).join('') + '<span>マスコン</span>';
+const notchCells = [...notchCol.querySelectorAll('i')];
+let hudKey = '';
+function drawSpeedo(sp: number, lim: number) {
+  const c = speedo, W = 300, H = 250, cx = 150, cy = 140, R = 112;
+  c.clearRect(0, 0, W, H);
+  const A0 = Math.PI * 0.8, A1 = Math.PI * 2.2, MAX = 120;
+  const ang = (v: number) => A0 + (A1 - A0) * Math.min(1, v / MAX);
+  // 下地
+  c.lineCap = 'round';
+  c.strokeStyle = 'rgba(10,12,16,0.45)'; c.lineWidth = 34; c.beginPath(); c.arc(cx, cy, R - 6, A0, A1); c.stroke();
+  // 速度の弧
+  c.strokeStyle = sp > lim + 1 ? '#FF5A4E' : '#FFB347'; c.lineWidth = 10; c.beginPath(); c.arc(cx, cy, R, A0, ang(sp)); c.stroke();
+  // 目盛り
+  c.strokeStyle = '#E8ECF5'; c.fillStyle = '#E8ECF5'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.font = '700 15px "Share Tech Mono", monospace';
+  for (let v = 0; v <= MAX; v += 10) {
+    const a = ang(v), big = v % 20 === 0; c.lineWidth = big ? 3 : 1.5; c.lineCap = 'butt';
+    c.beginPath(); c.moveTo(cx + Math.cos(a) * (R - 12), cy + Math.sin(a) * (R - 12)); c.lineTo(cx + Math.cos(a) * (R - (big ? 24 : 19)), cy + Math.sin(a) * (R - (big ? 24 : 19))); c.stroke();
+    if (big) c.fillText(String(v), cx + Math.cos(a) * (R - 38), cy + Math.sin(a) * (R - 38));
+  }
+  // 制限の印
+  const la = ang(lim); c.strokeStyle = '#FF5A4E'; c.lineWidth = 4;
+  c.beginPath(); c.moveTo(cx + Math.cos(la) * (R - 16), cy + Math.sin(la) * (R - 16)); c.lineTo(cx + Math.cos(la) * (R + 10), cy + Math.sin(la) * (R + 10)); c.stroke();
+  // 針
+  const a = ang(sp); c.strokeStyle = '#FFFFFF'; c.lineWidth = 4; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(cx - Math.cos(a) * 10, cy - Math.sin(a) * 10); c.lineTo(cx + Math.cos(a) * (R - 26), cy + Math.sin(a) * (R - 26)); c.stroke();
+  // 数字
+  c.fillStyle = '#FFFFFF'; c.font = '700 64px "Share Tech Mono", monospace'; c.fillText(String(Math.round(sp)), cx, cy + 62);
+  c.font = '700 14px "Share Tech Mono", monospace'; c.fillStyle = '#A9B2C8'; c.fillText('km/h', cx, cy + 98);
+  // 制限の丸
+  c.fillStyle = '#FFFFFF'; c.beginPath(); c.arc(cx + 104, cy + 70, 22, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#D22'; c.lineWidth = 4; c.beginPath(); c.arc(cx + 104, cy + 70, 20, 0, Math.PI * 2); c.stroke();
+  c.fillStyle = '#111'; c.font = '700 20px "Share Tech Mono", monospace'; c.fillText(String(lim), cx + 104, cy + 71);
+}
+function fmtDist(d: number) { return d > 999 ? `${(d / 1000).toFixed(2)} km` : `${d.toFixed(d < 50 ? 1 : 0)} m`; }
+
 function updateHud() {
-  $('clock').textContent = fmtTime(sim.t);
   const at0 = sim.at >= 0;
-  const st = STATIONS[Math.min(STATIONS.length - 1, at0 ? sim.at : sim.next)];
-  $('nextK').textContent = at0 ? '停車中' : '次は';
-  $('nextSt').textContent = st.name;
-  $('nextT').textContent = at0 ? `発 ${fmtTime(st.dep)}` : `着 ${fmtTime(st.arr)}`;
+  const idx = Math.min(STATIONS.length - 1, at0 ? sim.at : sim.next);
+  const st = STATIONS[idx];
   const dist = at0 ? null : STATIONS[sim.next].stop - sim.s;
-  $('dist').textContent = dist === null ? '---' : dist > 999 ? `${(dist / 1000).toFixed(2)} km` : `${dist.toFixed(dist < 50 ? 1 : 0)} m`;
-  $('speed').textContent = String(Math.round(kmh(sim.v)));
-  $('limit').textContent = String(currentLimit(sim));
+  const sp = kmh(sim.v), lim = currentLimit(sim);
+  // 速度計は値が変わったときだけ描き直す
+  const key = `${Math.round(sp * 2)}|${lim}`;
+  if (key !== hudKey) { hudKey = key; drawSpeedo(sp, lim); }
+  $('clock').textContent = fmtTime(sim.t);
+  $('stopKind').textContent = at0 ? (sim.at === STATIONS.length - 1 ? '終点' : '停車中') : '停車';
+  $('nextSt').textContent = st.name;
+  $('dist').textContent = dist === null ? '0 m' : fmtDist(dist);
+  $('dist2').textContent = dist === null ? '---' : fmtDist(dist);
+  const toArr = at0 ? st.dep - sim.t : st.arr - sim.t;
+  $('toArr').textContent = `${toArr < 0 ? '−' : ''}${Math.abs(Math.round(toArr))} 秒`;
+  $('toArr').parentElement!.firstElementChild!.textContent = at0 ? '発車まで' : '到着まで';
+  $('toArr').classList.toggle('late', toArr < 0);
+  const gr = gradeAt(sim.s) * 1000;
+  $('grade').textContent = `${gr >= 0 ? '+' : ''}${gr.toFixed(1)}‰`;
+  // 次の駅の時刻（このあと 2 駅）
+  const tl = STATIONS.slice(idx, idx + 2).map((x, i) => {
+    const t = i === 0 && at0 ? x.dep : x.arr;
+    return `<li><span>${x.name}</span><b class="mono">${fmtTime(t).slice(0, 5)}<small>${fmtTime(t).slice(5)}</small></b></li>`;
+  }).join('');
+  const tlEl = $('timeline'); if (tlEl.dataset.k !== tl) { tlEl.dataset.k = tl; tlEl.innerHTML = tl; }
+  // マスコンの段・BC・MR
+  for (const cell of notchCells) cell.classList.toggle('on', Number(cell.dataset.n) === sim.notch);
+  $('bcBar').style.height = `${Math.min(100, (sim.brake / 1.4) * 100)}%`;
+  $('mrBar').style.height = `${82 + Math.sin(sim.t * 0.3) * 3}%`;
   const n = $('notch');
   n.textContent = notchLabel(sim.notch);
   n.className = 'mono ' + (sim.notch === EB ? 'eb' : sim.notch > 0 ? 'p' : sim.notch < 0 ? 'b' : '');
@@ -284,11 +343,11 @@ function updateHud() {
   knob.style.top = `calc(${((5 - (sim.notch === EB ? -9 : sim.notch)) / 14) * 100}% - ${((5 - (sim.notch === EB ? -9 : sim.notch)) / 14) * 34}px)`;
   lever.setAttribute('aria-valuenow', String(sim.notch));
   const d = $('door');
-  d.textContent = sim.door === 'closed' ? '戸閉 ●' : sim.door === 'open' ? 'ドア 開' : 'ドア 動作中';
+  d.textContent = sim.door === 'closed' ? '戸閉' : sim.door === 'open' ? 'ドア開' : 'ドア動作中';
   d.className = sim.door === 'closed' ? 'closed' : '';
   $('ats').hidden = sim.ats === 'off';
   $('ats').textContent = sim.ats === 'brake' ? 'ATS ブレーキ' : 'ATS 警報';
-  $('score').textContent = `${totalScore(sim) + (sim.finished ? 0 : Math.round(sim.leg.bonus - sim.leg.penalty))} 点`;
+  $('score').textContent = String(totalScore(sim) + (sim.finished ? 0 : Math.round(sim.leg.bonus - sim.leg.penalty)));
   // 発車メロディ：発車 25 秒前、ドアが開いているとき
   if (at0 && sim.door === 'open' && sim.t > st.dep - 25 && melodyPlayed !== sim.at && sim.at < STATIONS.length - 1) {
     melodyPlayed = sim.at; sound.melody(); subtitle('発車メロディ。発車時刻が近づいたら O でドアを閉めます');

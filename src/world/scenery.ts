@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { at, LENGTH, STATIONS, TUNNEL, BRIDGE, CROSSINGS, zoneAt } from '../route';
 import { ground, zoneW, C, FORM_W, riverS } from './terrain';
 import { tex, loadProp, Prop } from './assets';
-import { merge, rng, placeAt, bake } from './geo';
-import { makeHouse, onPlatform } from './track';
+import { merge, rng } from './geo';
+import { onPlatform } from './track';
+import { buildTown } from './town';
 
 export interface Scenery { near: THREE.Object3D[]; update(cam: THREE.Vector3, o: { grass: number; trees: number; treeShadow: number }): void; }
 
@@ -50,6 +51,24 @@ function treeGeometry(r: () => number, kind: 'broad' | 'conifer') {
   return { trunk: merge(trunks), leaves: merge(cards), h };
 }
 
+/** 桜の花の板（花びらのかたまりを描く） */
+function blossomMaterial() {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 512;
+  const c = cv.getContext('2d')!;
+  let a = 9; const r = () => ((a = (a * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 900; i++) {
+    const x = 128 + (r() - 0.5) * 220 * Math.sin(r() * Math.PI), y = 30 + r() * 450;
+    const rad = 3 + r() * 5;
+    const col = r() < 0.12 ? `hsl(95, 35%, ${30 + r() * 15}%)` : `hsl(${340 + r() * 15}, ${55 + r() * 25}%, ${80 + r() * 12}%)`;
+    c.fillStyle = col;
+    for (let k = 0; k < 5; k++) { const an = (k / 5) * Math.PI * 2 + r(); c.beginPath(); c.arc(x + Math.cos(an) * rad * 0.7, y + Math.sin(an) * rad * 0.7, rad * 0.6, 0, Math.PI * 2); c.fill(); }
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  const m = new THREE.MeshStandardMaterial({ map: t, alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.8 });
+  m.alphaToCoverage = true;
+  return m;
+}
+
 function leafMaterial(tint: number) {
   const m = new THREE.MeshStandardMaterial({
     map: tex('tex/leafcard.png', true), alphaTest: 0.5, side: THREE.DoubleSide, color: tint, roughness: 0.85,
@@ -90,6 +109,7 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
     { ...treeGeometry(rng(2), 'broad'), lm: leafMaterial(0xa8c890) },
     { ...treeGeometry(rng(3), 'conifer'), lm: leafMaterial(0x7f9a70) },
     { ...treeGeometry(rng(4), 'conifer'), lm: leafMaterial(0x8aa078) },
+    { ...treeGeometry(rng(5), 'broad'), lm: blossomMaterial() }, // 桜
   ];
   const imps = variants.map((v) => impostor(renderer, v.trunk, v.leaves, v.h, v.lm, trunkM));
 
@@ -119,6 +139,21 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
       if (g.paddy > 0.3 || g.sand > 0.3 || g.h < 0.5) continue;
       const conifer = wz.forest > 0.5 || g.h - at(Math.max(0, Math.min(LENGTH, s))).y > 15;
       trees.push({ x: f.x, y: g.h - 0.2, z: f.z, rot: r() * Math.PI * 2, sc: 0.75 + r() * 0.6, v: (conifer ? 2 : 0) + (r() < 0.5 ? 0 : 1), ad });
+    }
+  }
+  // 駅の近くの桜並木
+  for (const st of STATIONS) {
+    for (let s = st.stop - 230; s < st.stop + 120; s += 11 + r() * 5) {
+      for (const side of [1, -1]) {
+        if (r() < 0.35) continue;
+        const ad = side > 0 ? 9 + r() * 3 : 18.5 + r() * 2;
+        const d = C + side * ad;
+        if (avoid(s, d) && !(onPlatform(s) && side < 0)) continue;
+        if (side > 0 && onPlatform(s)) continue;
+        const f = at(s, d);
+        const g = ground(s, d, f.x, f.z);
+        trees.push({ x: f.x, y: g.h - 0.2, z: f.z, rot: r() * Math.PI * 2, sc: 0.8 + r() * 0.35, v: 4, ad });
+      }
     }
   }
   // 近い木：葉の板（200 m ごとの束）。遠い木：絵の板（十字）を種類ごとに 1 回で描く
@@ -159,7 +194,7 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
   const NEAR_AD = 110;
   const mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), sv = new THREE.Vector3(), pv = new THREE.Vector3();
   const compose = (t: T) => { q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot); sv.setScalar(t.sc); pv.set(t.x, t.y, t.z); return mtx.compose(pv, q, sv); };
-  for (let v = 0; v < 4; v++) {
+  for (let v = 0; v < variants.length; v++) {
     const list = trees.filter((t) => t.v === v);
     if (!list.length) continue;
     const geo = cross[v].clone();
@@ -177,7 +212,7 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
     const center = at(k * BUCKET + BUCKET / 2);
     const nearG = new THREE.Group();
     const casters: THREE.Mesh[] = [];
-    for (let v = 0; v < 4; v++) {
+    for (let v = 0; v < variants.length; v++) {
       const nearL = list.filter((t) => t.v === v && t.ad < NEAR_AD);
       if (!nearL.length) continue;
       const leaves = new THREE.InstancedMesh(variants[v].leaves, variants[v].lm, nearL.length);
@@ -268,8 +303,8 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
     lods.push({ obj: g, center: new THREE.Vector3(c.x, c.y, c.z), kind: 'props' });
   }
 
-  // ---- 家並み ----
-  buildTowns(group, r);
+  // ---- 町並み ----
+  buildTown(group);
 
   const update: Scenery['update'] = (cam, o) => {
     uNearR.value = o.trees;
@@ -293,41 +328,6 @@ function nearestS(t: { x: number; z: number }): number {
     if (e < bd) { bd = e; best = s; }
   }
   return best;
-}
-
-function buildTowns(group: THREE.Group, r: () => number) {
-  const buckets = new Map<number, THREE.Object3D[]>();
-  const addB = (s: number, o: THREE.Object3D) => { const k = Math.floor(s / 600); if (!buckets.has(k)) buckets.set(k, []); buckets.get(k)!.push(o); };
-  for (let s = -250; s < LENGTH + 200; s += 9) {
-    const wz = zoneW(s);
-    if (wz.town < 0.5) continue;
-    for (let k = 0; k < 2; k++) {
-      if (r() < 0.35) continue;
-      const side = r() < 0.5 ? 1 : -1;
-      const ad = 16 + r() * 90;
-      const d = C + side * ad;
-      if (onPlatform(s) && side > 0 && ad < 34) continue;
-      if (CROSSINGS.some((c) => Math.abs(s - c.s) < 14)) continue;
-      if (side > 0 && zoneAt(Math.max(0, s)) === 'coast') continue;
-      const f = at(s, d);
-      const g = ground(s, d, f.x, f.z, wz);
-      if (g.h < 0.8 || Math.abs(g.h - (at(Math.max(0, Math.min(LENGTH, s))).y - 0.85)) > 2.5) continue;
-      const two = r() < 0.45;
-      const roof = r() < 0.5 ? 'grey' : r() < 0.7 ? 'clay' : 'metal';
-      const house = makeHouse(7 + r() * 4, 6 + r() * 3, two ? 5.8 : 3.2, roof, r);
-      house.applyMatrix4(placeAt(s, d, g.h - 0.2, (r() < 0.8 ? 0 : Math.PI / 2) + (r() - 0.5) * 0.1));
-      addB(s, house);
-    }
-  }
-  // 駅前のビル（浜田）
-  const st = STATIONS[1];
-  for (let i = 0; i < 4; i++) {
-    const s = st.stop - 90 + i * 28, d = C + 30 + r() * 12;
-    const b = makeHouse(14, 12, 9 + r() * 6, 'metal', r);
-    b.applyMatrix4(placeAt(s, d, at(s).y - 0.8));
-    addB(s, b);
-  }
-  for (const list of buckets.values()) for (const m of bake(list)) group.add(m);
 }
 
 /** 岩：ゆがめた多面体（軽い） */
