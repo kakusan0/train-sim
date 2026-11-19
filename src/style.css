@@ -147,3 +147,12 @@ th:first-child, td:first-child { text-align: left; }
   #btns { grid-template-columns: repeat(4, 52px); }
 }
 @media (max-width: 720px) and (pointer: coarse) { #meter { transform: scale(0.72); transform-origin: left bottom; } }
+
+/* 路線を選ぶ */
+#netmap svg { width: 100%; height: auto; display: block; border-radius: 12px; background: #0f141d; border: 1px solid var(--line); }
+.routes #routeCards { display: grid; gap: 8px; }
+.routes label { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 4px 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+.routes label:has(input:checked) { border-color: var(--cyan); background: rgba(95, 212, 255, 0.08); }
+.routes .sw { width: 14px; height: 14px; border-radius: 4px; background: var(--c); }
+.routes label small { grid-column: 2 / -1; padding-left: 0; width: auto; }
+#stopinfo .line { justify-self: end; font-size: 12px; font-weight: 700; color: #fff; border-radius: 4px; padding: 1px 8px; font-style: normal; text-shadow: none; }

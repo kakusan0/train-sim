@@ -5,6 +5,7 @@ import { ground, zoneW, C, FORM_W, riverS } from './terrain';
 import { tex, loadProp, Prop } from './assets';
 import { merge, rng } from './geo';
 import { onPlatform } from './track';
+import { AOBA_TRACK, SAZA_TRACK } from '../net/network';
 import { buildTown } from './town';
 
 export interface Scenery { near: THREE.Object3D[]; update(cam: THREE.Vector3, o: { grass: number; trees: number; treeShadow: number }): void; }
@@ -122,6 +123,8 @@ export async function buildScenery(group: THREE.Group, renderer: THREE.WebGLRend
     if (onPlatform(s) && ad < 30) return true;
     if (CROSSINGS.some((c) => Math.abs(s - c.s) < 8)) return true;
     if (Math.abs(s - riverS(d)) < 22) return true;
+    const f = at(s, d);
+    if (AOBA_TRACK.nearest(f.x, f.z, 8).dist < 12 || SAZA_TRACK.nearest(f.x, f.z, 8).dist < 13) return true;
     return false;
   };
   for (let s = -250; s < LENGTH + 250; s += 3) {

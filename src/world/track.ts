@@ -6,6 +6,9 @@ import {
 import { extrudeAlong, beam, wire, merge, placeAt, labelTex, rng } from './geo';
 import { pbr } from './assets';
 import { groundH, RIVER_LEVEL } from './terrain';
+import { buildPlatform } from './stations';
+import { MAIN } from '../route';
+import { AOBA_D, SAZA_CROSS_MAIN } from '../net/network';
 
 export const S_START = -300, S_END = LENGTH - 70; // 線路の両端（終点は車止め）
 const GAUGE = 1.067;
@@ -108,7 +111,7 @@ export function buildTrack(group: THREE.Group, mats: Record<string, THREE.Materi
   const SPAN = 50;
   const inTunnel = (s: number) => s > TUNNEL.from - 2 && s < TUNNEL.to + 2;
   const poleS: number[] = [];
-  for (let s = S_START + 10; s < S_END - 5; s += SPAN) if (!inTunnel(s) && !(s > BRIDGE.from - 4 && s < BRIDGE.to + 4)) poleS.push(s);
+  for (let s = S_START + 10; s < S_END - 5; s += SPAN) if (!inTunnel(s) && !(s > BRIDGE.from - 4 && s < BRIDGE.to + 4) && Math.abs(s - SAZA_CROSS_MAIN) > 12) poleS.push(s);
   for (const s of poleS) {
     const plat = onPlatform(s);
     const y = at(s).y;
@@ -237,7 +240,13 @@ export function buildTrack(group: THREE.Group, mats: Record<string, THREE.Materi
   }
 
   // ---- 駅 ----
-  STATIONS.forEach((st, i) => buildStation(group, M, i, st.name, st.kana, add, signPost));
+  STATIONS.forEach((st, i) => buildPlatform(group, M, {
+    path: MAIN, stop: st.stop, trackD: 0, side: 1, width: i === 1 ? AOBA_D - 3.1 : 4.65,
+    island: i === 1 ? { otherD: AOBA_D } : undefined,
+    name: st.name, kana: st.kana, prev: STATIONS[i - 1]?.name ?? '', next: STATIONS[i + 1]?.name ?? '',
+    line: 'ひかり野線', color: '#1f6fb4', transfer: st.transfer,
+    house: i === 1 ? AOBA_D + 12 : 12.2,
+  }, add));
 
   // ---- 車止め ----
   for (const t of TRACKS) {
@@ -264,77 +273,6 @@ export function buildTrack(group: THREE.Group, mats: Record<string, THREE.Materi
 }
 
 type AddFn = (g: THREE.BufferGeometry, m: THREE.Material, cast?: boolean, recv?: boolean) => THREE.Mesh;
-type SignFn = (s: number, d: number, tex: THREE.Texture, w: number, h: number, height?: number) => THREE.Group;
-
-function buildStation(group: THREE.Group, M: Record<string, THREE.Material>, i: number, name: string, kana: string, add: AddFn, signPost: SignFn) {
-  const [a, b] = platformRange(i);
-  const top = 1.0;
-  // ホーム：上面・縁の白線・点字ブロック・側面
-  const edge = 1.55, back = 6.2;
-  add(extrudeAlong([[back, top], [edge + 0.95, top]], a, b, 2, { uScale: 0.5, vScale: 0.5 }), M.platform, false);
-  add(extrudeAlong([[edge + 0.95, top + 0.004], [edge + 0.55, top + 0.004]], a, b, 2, { uScale: 1, vScale: 2 }), M.yellow, false);
-  add(extrudeAlong([[edge + 0.55, top], [edge + 0.12, top]], a, b, 2, { uScale: 0.5, vScale: 0.5 }), M.platform, false);
-  add(extrudeAlong([[edge + 0.12, top + 0.003], [edge, top + 0.003], [edge, top - 0.06]], a, b, 2), M.white, false);
-  add(extrudeAlong([[edge, top - 0.06], [edge + 0.1, -0.4], [edge + 0.1, -0.9]], a, b, 2, { uScale: 0.5, vScale: 0.5 }), M.concreteDark, false);
-  add(extrudeAlong([[back + 0.25, -0.9], [back + 0.25, top + 1.2], [back, top + 1.2], [back, top]], a, b, 2, { uScale: 0.5, vScale: 0.5 }), M.concrete, true);
-  // ホームの端のスロープ
-  // 屋根（上屋）と柱
-  const roofA = STATIONS[i].stop - 70, roofB = STATIONS[i].stop - 10;
-  add(extrudeAlong([[back + 0.4, top + 3.6], [edge + 1.0, top + 3.15]], roofA, roofB, 2, { uScale: 0.5, vScale: 0.5 }), M.roof, true);
-  add(extrudeAlong([[edge + 1.0, top + 3.15], [edge + 1.0, top + 2.95], [back + 0.4, top + 3.4]], roofA, roofB, 4), M.steel, false);
-  const cols: THREE.BufferGeometry[] = [], lamps: THREE.BufferGeometry[] = [], benches: THREE.BufferGeometry[] = [];
-  for (let s = roofA + 3; s < roofB; s += 8) {
-    const f = at(s, back - 0.6), y = at(s).y;
-    const c = new THREE.CylinderGeometry(0.1, 0.1, 3.5, 10); c.translate(f.x, y + top + 1.75, f.z); cols.push(c);
-    const lp = new THREE.BoxGeometry(0.2, 0.06, 1.2); lp.applyMatrix4(placeAt(s, edge + 2.2, y + top + 3.0)); lamps.push(lp);
-    if (Math.round(s) % 16 < 8) {
-      const bn = new THREE.BoxGeometry(0.45, 0.08, 1.8); bn.applyMatrix4(placeAt(s + 3, back - 1.2, y + top + 0.45)); benches.push(bn);
-      const bl = new THREE.BoxGeometry(0.08, 0.45, 1.8); bl.applyMatrix4(placeAt(s + 3, back - 1.0, y + top + 0.7)); benches.push(bl);
-    }
-  }
-  add(merge(cols), M.steel, true);
-  add(merge(lamps), M.lamp, false, false);
-  if (benches.length) add(merge(benches), M.steelBlue, true);
-  // 駅名標
-  const prevN = STATIONS[i - 1]?.name ?? '', nextN = STATIONS[i + 1]?.name ?? '';
-  const nameTex = labelTex(1024, 360, (c) => {
-    c.fillStyle = '#fbfbf8'; c.fillRect(0, 0, 1024, 360);
-    c.fillStyle = '#1f6fb4'; c.fillRect(0, 250, 1024, 34);
-    c.fillStyle = '#f08a24'; c.fillRect(0, 284, 1024, 10);
-    c.fillStyle = '#16181c'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.font = '900 140px "Zen Kaku Gothic New", sans-serif'; c.fillText(name, 512, 120);
-    c.font = '700 42px "Zen Kaku Gothic New", sans-serif'; c.fillText(kana, 512, 215);
-    c.font = '700 38px "Zen Kaku Gothic New", sans-serif'; c.textAlign = 'left'; c.fillText(prevN ? `← ${prevN}` : '', 24, 325);
-    c.textAlign = 'right'; c.fillText(nextN ? `${nextN} →` : '', 1000, 325);
-    c.font = '700 30px "Zen Kaku Gothic New", sans-serif'; c.textAlign = 'left'; c.fillStyle = '#1f6fb4'; c.fillText('ひかり野線', 24, 40);
-  });
-  for (const ds of [-30, -85]) {
-    const g = signPost(STATIONS[i].stop + ds, back - 0.8, nameTex, 2.2, 0.77, 1.9);
-    g.position.y = at(STATIONS[i].stop + ds).y + top;
-    g.rotateY(Math.PI / 2 - 0.2);
-  }
-  // 停止位置の目印（2 両）
-  const stopTex = labelTex(160, 110, (c) => {
-    c.fillStyle = '#f2d24b'; c.fillRect(0, 0, 160, 110); c.lineWidth = 8; c.strokeStyle = '#111'; c.strokeRect(4, 4, 152, 102);
-    c.fillStyle = '#111'; c.font = '900 84px "Zen Kaku Gothic New", sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('2', 80, 60);
-  });
-  const sp = signPost(STATIONS[i].stop, edge + 0.25, stopTex, 0.42, 0.29, 1.2);
-  sp.position.y = at(STATIONS[i].stop).y + top;
-  // 駅舎（ホームの裏）
-  const r = rng(i * 31 + 5);
-  const bs = STATIONS[i].stop - 45 + r() * 10;
-  const house = makeHouse(14, 8, 4.2, 'clay', r);
-  house.applyMatrix4(placeAt(bs, back + 6, at(bs).y - 0.6));
-  group.add(house);
-  // ホームの柵
-  const fence: THREE.BufferGeometry[] = [];
-  for (let s = a; s < b; s += 2.5) {
-    const f = at(s, back + 0.12), y = at(s).y;
-    const p = new THREE.BoxGeometry(0.05, 1.0, 0.05); p.translate(f.x, y + top + 1.7, f.z); fence.push(p);
-  }
-  fence.push(extrudeAlong([[back + 0.15, top + 2.2], [back + 0.1, top + 2.2], [back + 0.1, top + 2.15], [back + 0.15, top + 2.15]], a, b, 4, { closed: true }));
-  add(merge(fence), M.steel, true);
-}
 
 export const houseMats: Record<string, THREE.Material> = {};
 function hm() {

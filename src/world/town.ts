@@ -2,7 +2,8 @@
 // 壁は 1 枚の「壁の絵の詰め合わせ」（16 種）から 1 階 × 1 間ずつ貼る。色は頂点の色でつける。
 // 束（600 m）ごとに材質別へまとめるので、描画の回数は少ない。
 import * as THREE from 'three';
-import { at, LENGTH, STATIONS, CROSSINGS, zoneAt } from '../route';
+import { at, LENGTH, STATIONS, CROSSINGS, zoneAt, CITY } from '../route';
+import { AOBA_TRACK, SAZA_TRACK } from '../net/network';
 import { ground, zoneW, C, FORM_W } from './terrain';
 import { pbr } from './assets';
 import { extrudeAlong, rng, wire, merge } from './geo';
@@ -95,7 +96,7 @@ class Batch {
   }
 }
 
-interface Ctx { walls: Batch; roofs: Record<'clay' | 'grey', THREE.BufferGeometry[]>; }
+interface Ctx { walls: Batch; roofs: Record<'clay' | 'grey', THREE.BufferGeometry[]>; far?: boolean; }
 
 /** 箱型の建物。m は置く位置と向き（ローカル：x 横幅、z 奥行き、y 上）。face(i, floor, bay) で壁の絵を選ぶ */
 function building(cx: Ctx, m: THREE.Matrix4, w: number, d: number, floors: number, fh: number, color: THREE.Color,
@@ -178,7 +179,7 @@ export function buildTown(group: THREE.Group): void {
   const roofMats = { clay: pbr('clay_roof_tiles', { color: 0x7d8496 }), grey: pbr('grey_roof_tiles', { color: 0x6c7076 }) };
   const BUCKET = 600;
   const ctxs = new Map<number, Ctx>();
-  const ctxAt = (s: number) => { const k = Math.floor(s / BUCKET); if (!ctxs.has(k)) ctxs.set(k, { walls: new Batch(), roofs: { clay: [], grey: [] } }); return ctxs.get(k)!; };
+  const ctxAt = (s: number, farRow = false) => { const k = Math.floor(s / BUCKET) * 2 + (farRow ? 1 : 0); if (!ctxs.has(k)) ctxs.set(k, { walls: new Batch(), roofs: { clay: [], grey: [] }, far: farRow }); return ctxs.get(k)!; };
   const nearStation = (s: number) => STATIONS.some((st) => Math.abs(s - st.stop + 40) < 230);
   const isTown = (s: number) => zoneW(s).town > 0.55;
   const crossingNear = (s: number, m: number) => CROSSINGS.some((c) => Math.abs(s - c.s) < m);
@@ -186,12 +187,15 @@ export function buildTown(group: THREE.Group): void {
   // ---- 区画ごとに建物を置く ----
   for (const side of [1, -1]) {
     // 列（線路から遠ざかる方向）：手前の列から順に
-    const rows = side > 0 ? [11, 27, 44, 62, 82] : [19, 35, 52, 70, 90];
+    const near = side > 0 ? [11, 27, 44, 62, 82] : [19, 35, 52, 70, 90];
+    const far = [108, 128, 150, 174, 200, 228, 258, 290, 324, 360, 398];
+    const rows = [...near, ...far];
     rows.forEach((ad0, row) => {
       let s = -240 + r() * 10;
       while (s < LENGTH + 200) {
         const station = nearStation(s);
-        const apt = station ? r() < 0.45 : r() < 0.12;
+        const hama = Math.abs(s - 2110) < 450 && ad0 < 260;
+        const apt = station || hama ? r() < 0.5 : r() < 0.12;
         const shop = station && row === 0 && !apt && r() < 0.7;
         const w = apt ? 18 + r() * 14 : shop ? 7 + r() * 3 : 8 + r() * 3.5;
         const dep = apt ? 9 + r() * 3 : 7 + r() * 3;
@@ -199,19 +203,23 @@ export function buildTown(group: THREE.Group): void {
         s += w + (apt ? 4 : 1.5) + r() * (station ? 2 : 6);
         if (!isTown(sc) || !isTown(sc - w / 2) || !isTown(sc + w / 2)) continue;
         if (crossingNear(sc, w / 2 + 12)) continue;
+        if (ad0 > 100 && (sc < CITY.from || sc > CITY.to)) continue; // 遠い列は都市部だけ
         if (side > 0 && zoneAt(Math.max(0, sc)) === 'coast') continue;
         if (side > 0 && onPlatform(sc) && ad0 < 40) continue; // ホームと駅舎の裏
         if (r() < (station ? 0.08 : 0.22)) continue; // 空き地
         const ad = ad0 + dep / 2 + r() * 2;
         const d = C + side * ad;
         const f = at(sc, d);
+        // ほかの線路（あおば線・さざなみ線の高架）の上には建てない
+        const rad = Math.hypot(w, dep) / 2;
+        if (AOBA_TRACK.nearest(f.x, f.z, 8).dist < rad + 9 || SAZA_TRACK.nearest(f.x, f.z, 8).dist < rad + 10) continue;
         const g = ground(sc, d, f.x, f.z);
         const base = at(Math.max(0, Math.min(LENGTH, sc))).y;
         if (g.h < 0.8 || Math.abs(g.h - (base - 0.85)) > 2.2) continue;
         const m = lotMatrix(sc, d, g.h - 0.15, side, (r() - 0.5) * 0.06);
-        const cx = ctxAt(sc);
+        const cx = ctxAt(sc, ad0 > 100);
         if (apt) {
-          const floors = 3 + Math.floor(r() * (station ? 5 : 3));
+          const floors = 3 + Math.floor(r() * (hama ? 9 : station ? 5 : 3));
           const color = APT_COLORS[Math.floor(r() * APT_COLORS.length)];
           const balcony = r() < 0.5 ? T.AptBalcony : T.AptBalcony2;
           building(cx, m, w, dep, floors, 2.9, color, (sIdx, fl, bay) => {
@@ -245,9 +253,9 @@ export function buildTown(group: THREE.Group): void {
   }
   for (const cx of ctxs.values()) {
     const g = cx.walls.geometry();
-    if (g) { const mesh = new THREE.Mesh(g, wallM); mesh.castShadow = true; mesh.receiveShadow = true; group.add(mesh); }
+    if (g) { const mesh = new THREE.Mesh(g, wallM); mesh.castShadow = !cx.far; mesh.receiveShadow = true; group.add(mesh); }
     for (const k of ['clay', 'grey'] as const) if (cx.roofs[k].length) {
-      const mesh = new THREE.Mesh(merge(cx.roofs[k]), roofMats[k]); mesh.castShadow = true; mesh.receiveShadow = true; group.add(mesh);
+      const mesh = new THREE.Mesh(merge(cx.roofs[k]), roofMats[k]); mesh.castShadow = !cx.far; mesh.receiveShadow = true; group.add(mesh);
     }
   }
 
@@ -281,7 +289,21 @@ function buildStreets(group: THREE.Group, isTown: (s: number) => boolean, crossi
     let s0 = a;
     for (const c of CROSSINGS) if (c.s > a && c.s < b) { segs.push([s0, c.s - 6]); s0 = c.s + 6; }
     segs.push([s0, b]);
-    for (const [x0, x1] of segs) {
+    // あおば線が横切る所で道を切る
+    const cutAoba = (list: [number, number][], dd: number) => {
+      const out: [number, number][] = [];
+      for (const [x0, x1] of list) {
+        let st = x0;
+        for (let q = x0; q <= x1; q += 4) {
+          const f = at(q, dd);
+          const bad = AOBA_TRACK.nearest(f.x, f.z, 8).dist < 7;
+          if (bad) { if (q - st > 12) out.push([st, q - 4]); st = q + 4; }
+        }
+        if (x1 - st > 12) out.push([st, x1]);
+      }
+      return out;
+    };
+    for (const [x0, x1] of cutAoba(segs, roadD)) {
       if (x1 - x0 < 20) continue;
       const road = new THREE.Mesh(extrudeAlong([[roadD + 3.2, -0.79], [roadD - 3.2, -0.79]], x0, x1, 4, { uScale: 0.33, vScale: 0.33 }), asphalt);
       road.receiveShadow = true; group.add(road);
@@ -317,7 +339,8 @@ function buildStreets(group: THREE.Group, isTown: (s: number) => boolean, crossi
       const segsF: [number, number][] = [];
       let f0 = a;
       for (let s = a; s <= b; s += 5) {
-        const bad = onPlatform(s) || crossingNear(s, 7);
+        const ff = at(s, fd);
+        const bad = onPlatform(s) || crossingNear(s, 7) || AOBA_TRACK.nearest(ff.x, ff.z, 8).dist < 6;
         if (bad && f0 !== null && s - f0 > 10) { segsF.push([f0, s]); }
         if (bad) f0 = s + 5;
       }

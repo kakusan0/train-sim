@@ -1,13 +1,19 @@
 // 外から見た列車（自分の列車と、すれ違う列車）。白い車体に青と橙の帯
 import * as THREE from 'three';
-import { at } from './route';
+import { MAIN } from './route';
+import type { Path } from './net/path';
 import { pbr } from './world/assets';
 import { merge } from './world/geo';
 
 export const CAR_LEN = 20;
 
 let mats: Record<string, THREE.Material> | null = null;
-function M() {
+const bandMats = new Map<string, THREE.Material>();
+function band(color: string) {
+  if (!bandMats.has(color)) bandMats.set(color, new THREE.MeshStandardMaterial({ color, metalness: 0.4, roughness: 0.35 }));
+  return bandMats.get(color)!;
+}
+function M(): Record<string, THREE.Material> {
   if (mats) return mats;
   mats = {
     body: new THREE.MeshStandardMaterial({ color: 0xe6eaea, metalness: 0.35, roughness: 0.32 }),
@@ -23,8 +29,8 @@ function M() {
 }
 
 /** 1 両。原点は床下中心のレール面、-z が前。front=true なら前面に運転台の顔 */
-export function makeCar(front: boolean, back: boolean, panto: boolean): THREE.Group {
-  const m = M();
+export function makeCar(front: boolean, back: boolean, panto: boolean, color = '#1f6fb4'): THREE.Group {
+  const m: Record<string, THREE.Material> = { ...M(), blue: band(color) };
   const g = new THREE.Group();
   const L = CAR_LEN, W = 2.86, Y0 = 1.15, Y1 = 3.9;
   // 車体（屋根を丸く）
@@ -89,18 +95,18 @@ export function makeCar(front: boolean, back: boolean, panto: boolean): THREE.Gr
   return g;
 }
 
-export interface TrainView { cars: THREE.Group[]; place(s: number, d: number, reverse?: boolean): void; group: THREE.Group; }
+export interface TrainView { cars: THREE.Group[]; place(s: number, d: number, reverse?: boolean, path?: Path): void; group: THREE.Group; }
 
 /** 2 両編成。s は先頭の位置。reverse=true は逆向きに走る列車 */
-export function makeTrain(): TrainView {
+export function makeTrain(color = '#1f6fb4'): TrainView {
   const group = new THREE.Group();
-  const cars = [makeCar(true, false, true), makeCar(false, true, false)];
+  const cars = [makeCar(true, false, true, color), makeCar(false, true, false, color)];
   cars.forEach((c) => group.add(c));
-  const place = (s: number, d: number, reverse = false) => {
+  const place = (s: number, d: number, reverse = false, P: Path = MAIN) => {
     cars.forEach((c, i) => {
       const center = reverse ? s + CAR_LEN * (i + 0.5) : s - CAR_LEN * (i + 0.5);
-      const f = at(center, d);
-      const fa = at(center - 7, d), fb = at(center + 7, d);
+      const f = P.at(center, d);
+      const fa = P.at(center - 7, d), fb = P.at(center + 7, d);
       c.position.set(f.x, f.y, f.z);
       const yaw = Math.atan2(-(fb.x - fa.x), -(fb.z - fa.z));
       const pitch = Math.atan2(fb.y - fa.y, 14);

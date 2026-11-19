@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { CSM } from 'three/examples/jsm/csm/CSM.js';
-import { at, gradeAt, STATIONS, TUNNEL, CROSSINGS, TRACK_GAP, TRAIN_LEN, fmtTime, curvatureAt, SIGNALS } from './route';
+import { at, TUNNEL, CROSSINGS, TRACK_GAP, TRAIN_LEN, fmtTime, HIKARI, Route } from './route';
+import { ROUTES, routeById, aobaToMain, AOBA } from './net/network';
+import { ILK, wireSignals, simRef, TrainRef } from './net/interlock';
+import { autopilot } from './ai';
+import { buildLines, LinesWorld } from './world/lines';
 import {
   createSim, step, stepNotch, setNotch, toggleDoor, pointCall, announce, horn, kmh, currentLimit, notchLabel, EB,
   aspectOf, Sim, Mode, legTotal, totalScore, rank, SimEvent,
@@ -54,9 +58,12 @@ const world = new THREE.Group();
 scene.add(world);
 const uTime = { value: 0 };
 
-let track!: TrackWorld, scenery!: Scenery, cab!: Cab, post!: Post;
+let track!: TrackWorld, lines!: LinesWorld, scenery!: Scenery, cab!: Cab, post!: Post;
 let myTrain!: TrainView;
-const others: { view: TrainView; s: number; v: number; passed: boolean }[] = [];
+const others: { view: TrainView; s: number; v: number; passed: boolean; ref: TrainRef }[] = [];
+/** ほかの路線の列車（自動運転） */
+const ais: { sim: Sim; view: TrainView; doneT: number; id: string }[] = [];
+const dummies = new Map<string, Sim>();
 const sound = new Sound();
 
 /** すべての材質に、遠くまでの細かい影（CSM）と独自の手直しをつなぐ */
@@ -86,7 +93,9 @@ async function build(progress: (p: string) => void) {
   terrainMat.userData.key = 'terrain';
   progress('線路と駅');
   await tick();
-  track = buildTrack(world, {});
+  const mats: Record<string, THREE.Material> = {};
+  track = buildTrack(world, mats);
+  lines = buildLines(world, mats);
   progress('海と川');
   buildWater(world, uTime);
   progress('木と草');
@@ -110,16 +119,17 @@ scene.add(rig);
 rig.add(camera);
 camera.position.set(-0.5, 2.75, 0);
 let view: 'cab' | 'ext' = params.get('view') === 'ext' ? 'ext' : 'cab';
-let lookYaw = 0, lookPitch = -0.15, extYaw = 2.5, extPitch = 0.18, extDist = 34;
+let lookYaw = 0, lookPitch = -0.15, extYaw = Number(params.get('ey') ?? 2.5), extPitch = Number(params.get('ep') ?? 0.18), extDist = Number(params.get('ed') ?? 34);
 let bump = 0, lastJoint = 0;
 
 function placeRig(sim: Sim, dt: number) {
   const s = sim.s - 1.4;
-  const f = at(s);
-  const fa = at(s - 6), fb = at(s + 6);
+  const P = sim.route.path;
+  const f = P.at(s);
+  const fa = P.at(s - 6), fb = P.at(s + 6);
   const yaw = Math.atan2(-(fb.x - fa.x), -(fb.z - fa.z));
   const pitch = Math.atan2(fb.y - fa.y, 12) - sim.a * 0.0035;
-  const k = curvatureAt(s);
+  const k = P.curvatureAt(s);
   const v = sim.v;
   const t = sim.t;
   // 継ぎ目の揺れ（25 m ごと）
@@ -229,7 +239,7 @@ function toast(text: string, pts = 0) {
 }
 function subtitle(text: string) { const el = $('sub'); el.textContent = text; el.classList.add('show'); subT = 4.5; }
 function stopCard(i: number) {
-  const st = STATIONS[i];
+  const st = sim.route.stations[i];
   const leg = sim.leg.station === i ? sim.leg : sim.legs.find((l) => l.station === i);
   if (!leg) return;
   const el = $('stopcard');
@@ -307,6 +317,7 @@ function drawSpeedo(sp: number, lim: number) {
 function fmtDist(d: number) { return d > 999 ? `${(d / 1000).toFixed(2)} km` : `${d.toFixed(d < 50 ? 1 : 0)} m`; }
 
 function updateHud() {
+  const STATIONS = sim.route.stations;
   const at0 = sim.at >= 0;
   const idx = Math.min(STATIONS.length - 1, at0 ? sim.at : sim.next);
   const st = STATIONS[idx];
@@ -324,7 +335,7 @@ function updateHud() {
   $('toArr').textContent = `${toArr < 0 ? '−' : ''}${Math.abs(Math.round(toArr))} 秒`;
   $('toArr').parentElement!.firstElementChild!.textContent = at0 ? '発車まで' : '到着まで';
   $('toArr').classList.toggle('late', toArr < 0);
-  const gr = gradeAt(sim.s) * 1000;
+  const gr = sim.route.path.gradeAt(sim.s) * 1000;
   $('grade').textContent = `${gr >= 0 ? '+' : ''}${gr.toFixed(1)}‰`;
   // 次の駅の時刻（このあと 2 駅）
   const tl = STATIONS.slice(idx, idx + 2).map((x, i) => {
@@ -355,6 +366,7 @@ function updateHud() {
 }
 
 function showResult() {
+  const STATIONS = sim.route.stations;
   running = false;
   sound.atsBell(false);
   const el = $('result');
@@ -366,7 +378,7 @@ function showResult() {
   }).join('');
   const notes = [...new Set(sim.legs.flatMap((l) => l.notes))];
   el.innerHTML = `<div class="card">
-    <p class="eyebrow">運転の結果　潮見台 → 山ノ口</p>
+    <p class="eyebrow">運転の結果　${sim.route.name}　${STATIONS[0].name} → ${STATIONS[STATIONS.length - 1].name}</p>
     <div style="display:flex;gap:20px;align-items:center"><span class="rank">${rank(sim)}</span><div><h2>${totalScore(sim)} 点</h2><span class="dim">満点 ${(STATIONS.length - 1) * 100}（加点で超えることがあります）</span></div></div>
     <div style="overflow-x:auto"><table><thead><tr><th>駅</th><th>停止位置</th><th>到着</th><th>乗り心地</th><th>加点</th><th>減点</th><th>合計</th></tr></thead><tbody>${rows}</tbody></table></div>
     ${notes.length ? `<p class="dim">気をつけたいこと：${notes.join('・')}</p>` : '<p class="dim">安全運転でした。</p>'}
@@ -380,39 +392,108 @@ function closeHelp() { paused = false; $('help').hidden = true; }
 $('help').querySelector('[data-close]')!.addEventListener('click', closeHelp);
 $('fpsBtn').addEventListener('click', () => toggleFps());
 
+function chosenRoute(): Route {
+  return routeById(params.get('route') ?? document.querySelector<HTMLInputElement>('input[name=route]:checked')?.value ?? 'hikari');
+}
+
 function startRun() {
   const mode = (document.querySelector<HTMLInputElement>('input[name=mode]:checked')?.value ?? 'easy') as Mode;
-  sim = createSim(mode);
+  const route = chosenRoute();
+  sim = createSim(mode, route);
+  const ST = route.stations;
   const s0 = Number(params.get('s'));
-  if (s0 > 0) { sim.s = s0; sim.at = -1; sim.served = false; sim.door = 'closed'; sim.notch = 0; sim.v = Number(params.get('v') ?? 60) / 3.6; sim.next = STATIONS.findIndex((st) => st.stop > s0 + 1); sim.passedSig = SIGNALS.filter((x) => x.s <= s0).length; sim.t = STATIONS[Math.max(0, sim.next - 1)].dep + 30; }
+  if (s0 > 0) { sim.s = s0; sim.at = -1; sim.served = false; sim.door = 'closed'; sim.notch = 0; sim.v = Number(params.get('v') ?? 60) / 3.6; sim.next = Math.max(1, ST.findIndex((st) => st.stop > s0 + 1)); sim.passedSig = route.signals.filter((x) => x.s <= s0).length; sim.t = ST[Math.max(0, sim.next - 1)].dep + 30; }
+  // 自分の列車の色
+  scene.remove(myTrain.group);
+  myTrain = makeTrain(route.color); scene.add(myTrain.group); finalize(myTrain.group);
+  cab.setRoute(route);
+  // 連動とほかの列車
+  ILK.clear();
+  for (const a of ais) scene.remove(a.view.group);
+  ais.length = 0;
+  for (const o of others) scene.remove(o.view.group);
   others.length = 0;
+  ILK.add(simRef('player', sim));
+  for (const r of ROUTES) {
+    dummies.set(r.id, createSim('normal', r));
+    if (r === route) continue;
+    const ai = createSim('normal', r);
+    ai.t = sim.t;
+    const view = makeTrain(r.color); scene.add(view.group); finalize(view.group);
+    const id = 'ai-' + r.id;
+    ais.push({ sim: ai, view, doneT: 0, id });
+    ILK.add(simRef(id, ai));
+  }
   spawned.clear();
   melodyPlayed = -1;
   running = true; paused = false;
   checkRotate();
   $('hud').hidden = false;
   $('title').hidden = true;
-  subtitle('潮見台・発車 07:00:45。発車メロディのあと、O でドアを閉めます');
+  $('lineName').textContent = route.name; $('lineName').style.background = route.color;
+  subtitle(`${route.name}　${ST[0].name}・発車 ${fmtTime(ST[0].dep)}。発車メロディのあと、O でドアを閉めます`);
+}
+
+/** ほかの路線の列車を進める */
+function updateAis(dt: number) {
+  for (const a of ais) {
+    if (a.sim.finished) {
+      a.doneT += dt;
+      if (a.doneT > 25 && a.view.group.visible) { a.view.group.visible = false; ILK.remove(a.id); } // 車庫へ
+    }
+    const sub = Math.ceil(dt / (1 / 60));
+    for (let i = 0; i < sub; i++) { autopilot(a.sim); step(a.sim, dt / sub); }
+    a.sim.events.length = 0;
+    if (a.view.group.visible) a.view.place(a.sim.s, 0, false, a.sim.route.path);
+  }
+  for (const d of dummies.values()) d.t = sim.t;
+}
+
+/** ひかり野線の上での自分の列車の位置（ひかり野線の外にいるときは null） */
+function playerMainS(): number | null {
+  if (sim.route === HIKARI) return sim.s;
+  if (sim.route === AOBA) return aobaToMain(sim.s);
+  return null;
+}
+/** ひかり野線の左の線路にいる列車の位置（踏切用） */
+function mainTrains(): number[] {
+  const out: number[] = [];
+  const p = playerMainS(); if (p !== null) out.push(p);
+  for (const a of ais) {
+    if (!a.view.group.visible) continue;
+    if (a.sim.route === HIKARI) out.push(a.sim.s);
+    else if (a.sim.route === AOBA) { const m = aobaToMain(a.sim.s); if (m !== null) out.push(m); }
+  }
+  return out;
 }
 
 // すれ違う列車
 const spawned = new Set<number>();
 const SPAWN_AT = [700, 2700, 4950];
 function updateOthers(dt: number) {
+  const ps = playerMainS();
   for (const s of SPAWN_AT) {
-    if (!spawned.has(s) && sim.s > s && sim.s < s + 300) {
+    if (ps !== null && !spawned.has(s) && ps > s && ps < s + 300) {
       spawned.add(s);
       const view = makeTrain();
       scene.add(view.group);
       finalize(view.group);
-      others.push({ view, s: Math.min(sim.s + 1300, 5700), v: 21, passed: false });
+      const o = { view, s: Math.min(ps + 1300, 5700), v: 21, passed: false, ref: null as unknown as TrainRef };
+      o.ref = { id: 'oncoming-' + s, key: 'main4', dir: -1, s: () => o.s, ready: () => true, nextStop: () => -Infinity, gone: () => o.s < -250 };
+      ILK.add(o.ref);
+      others.push(o);
     }
   }
   for (const o of others) {
+    // 平面交差の手前：進路がなければ止まって待つ
+    const z = 1868;
+    const wait = o.s > z && o.s - z < 260 && !ILK.free('diamond', o.ref);
+    const target = wait ? Math.max(0, Math.min(21, Math.sqrt(Math.max(0, 2 * 0.8 * (o.s - z - 25))))) : 21;
+    o.v += Math.max(-1.0 * dt, Math.min(0.6 * dt, target - o.v));
     o.s -= o.v * dt;
     o.view.place(o.s, TRACK_GAP, true);
-    const rel = o.s - sim.s;
-    if (!o.passed && rel < 15) { o.passed = true; if (view === 'cab') sound.whoosh(); }
+    const rel = o.s - (ps ?? -1e9);
+    if (!o.passed && rel < 15 && ps !== null) { o.passed = true; if (view === 'cab') sound.whoosh(); }
     o.view.group.visible = o.s > -250;
   }
 }
@@ -420,7 +501,7 @@ function updateOthers(dt: number) {
 function updateCrossings(time: number, camPos: THREE.Vector3): number {
   let vol = 0;
   track.crossings.forEach((c, i) => {
-    const mine = sim.s > c.s - 420 && sim.s - TRAIN_LEN < c.s + 4;
+    const mine = mainTrains().some((m) => m > c.s - 420 && m - TRAIN_LEN < c.s + 4);
     const other = others.some((o) => o.s < c.s + 420 && o.s + TRAIN_LEN > c.s - 4);
     const active = mine || other;
     for (const arm of c.arms) arm.rotation.x += ((active ? 0 : Math.PI / 2 * 0.96) - arm.rotation.x) * 0.04;
@@ -443,9 +524,10 @@ function loop(now = performance.now()) {
   uTime.value += dt;
   if (running && !paused && !needRotate) {
     const sub = Math.ceil(dt / (1 / 120));
+    ILK.update();
     for (let i = 0; i < sub; i++) step(sim, dt / sub);
-    // キーを押し続けると段を進める
     handleEvents(sim.events);
+    updateAis(dt);
     updateOthers(dt);
   }
   placeRig(sim, running && !paused ? dt : 0);
@@ -453,10 +535,13 @@ function loop(now = performance.now()) {
   rig.updateMatrixWorld(true);
   camera.getWorldPosition(camPos);
   // 信号
-  for (const sv of track.signals) updateSignal(sv, aspectOf(sv.sig, sim));
+  const whoFor = (r: Route) => (sim.route === r ? sim : ais.find((a) => a.sim.route === r && a.view.group.visible)?.sim ?? dummies.get(r.id) ?? sim);
+  for (const sv of track.signals) updateSignal(sv, aspectOf(sv.sig, whoFor(HIKARI)));
+  for (const sv of lines.signals) updateSignal(sv, aspectOf(sv.sig, whoFor(sv.route)));
   const crossVol = updateCrossings(uTime.value, camPos);
   sound.tick(dt, crossVol);
-  const inTunnel = sim.s - 1.4 > TUNNEL.from + 5 && sim.s - 1.4 < TUNNEL.to - 5;
+  const pm = playerMainS();
+  const inTunnel = pm !== null && pm - 1.4 > TUNNEL.from + 5 && pm - 1.4 < TUNNEL.to - 5;
   sound.update(sim.v, sim.power, sim.brake, inTunnel);
   // トンネルでは目が慣れるように明るさを変える
   const targetExp = inTunnel && view === 'cab' ? 2.4 : 1.0;
@@ -468,11 +553,12 @@ function loop(now = performance.now()) {
   // 自分の列車（外からの視点のときだけ見せる）
   myTrain.group.visible = view === 'ext';
   cab.group.visible = view === 'cab';
-  if (view === 'ext') myTrain.place(sim.s, 0);
-  cab.update(sim, dt, { wipers, guide: sim.mode === 'easy', dist: sim.at >= 0 ? null : STATIONS[sim.next].stop - sim.s });
+  if (view === 'ext') myTrain.place(sim.s, 0, false, sim.route.path);
+  cab.update(sim, dt, { wipers, guide: sim.mode === 'easy', dist: sim.at >= 0 ? null : sim.route.stations[sim.next].stop - sim.s });
   const L = LEVELS[gov.level];
   scenery.update(camPos, L);
   for (const im of track.sleepers) im.visible = im.boundingSphere!.center.distanceTo(camPos) < 450;
+  for (const im of lines.sleepers) im.visible = im.boundingSphere!.center.distanceTo(camPos) < 450;
   post.grade.uniforms.uSpeed.value = view === 'cab' ? Math.min(1, Math.max(0, (sim.v - 8) / 20)) : 0;
   if (running) updateHud();
   if (toastT > 0 && (toastT -= dt) <= 0) $('toast').classList.remove('show');
@@ -552,11 +638,55 @@ addEventListener('resize', () => {
   csm.updateFrustums();
 });
 
+// ---- 路線を選ぶ画面：カードと路線図 ----
+function buildTitle() {
+  const fmtLen = (m: number) => `${(m / 1000).toFixed(1)} km`;
+  const cards = ROUTES.map((r, i) => {
+    const st = r.stations;
+    const len = st[st.length - 1].stop - st[0].stop;
+    const min = Math.round((st[st.length - 1].arr - st[0].dep) / 60);
+    return `<label><input type="radio" name="route" value="${r.id}" ${i === 0 ? 'checked' : ''}><span class="sw" style="--c:${r.color}"></span><b>${r.name}</b>
+      <small>${st.map((x) => x.name).join(' → ')}　${st.length} 駅・${fmtLen(len)}・約 ${min} 分<br>${r.note}</small></label>`;
+  }).join('');
+  $('routeCards').innerHTML = cards;
+  // 路線図（浜田のまわり）：ひかり野線を横軸にした図（左が潮見台、右が山ノ口）
+  const toUV = (x: number, z: number) => { const n = HIKARI.path.nearest(x, z, 5); return [n.s, -n.d] as [number, number]; };
+  const pts = (P: import('./net/path').Path, a: number, b: number) => { const o: [number, number][] = []; for (let s = a; s <= b; s += 15) { const f = P.at(s); o.push(toUV(f.x, f.z)); } return o; };
+  const lines = [
+    { r: AOBA, p: pts(AOBA.path, 0, AOBA.stations[2].stop + 20), w: 10 },
+    { r: HIKARI, p: pts(HIKARI.path, 1000, 4000), w: 5 },
+    { r: ROUTES[2], p: pts(ROUTES[2].path, 0, ROUTES[2].path.length), w: 6 },
+  ];
+  const minX = 1000, maxX = 4000, minZ = -420, maxZ = 420;
+  const W = 640, H = 230;
+  const X = (u: number) => ((u - minX) / (maxX - minX)) * W, Y = (v: number) => ((v - minZ) / (maxZ - minZ)) * H;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
+  for (const l of lines) svg += `<polyline points="${l.p.map(([u, v]) => `${X(u).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${l.r.color}" stroke-width="${l.w}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  const seen = new Set<string>();
+  for (const l of lines) for (const st of l.r.stations) {
+    const f = l.r.path.at(st.stop);
+    const [u, v] = toUV(f.x, f.z);
+    if (u < minX || u > maxX) continue;
+    const key = `${Math.round(u / 30)}|${Math.round(v / 30)}`;
+    if (seen.has(key)) continue; seen.add(key);
+    svg += `<circle cx="${X(u)}" cy="${Y(v)}" r="6" fill="#fff" stroke="${l.r.color}" stroke-width="3"/>`;
+    const below = l.r.id !== 'saza';
+    svg += `<text x="${X(u)}" y="${Y(v) + (below ? 22 : -12)}" fill="#E8ECF5" font-size="14" font-weight="700" text-anchor="middle" font-family="Zen Kaku Gothic New, sans-serif">${st.name}</text>`;
+  }
+  const mark = (s: number, d: number, t: string) => { svg += `<text x="${X(s)}" y="${Y(-d)}" fill="#FFB347" font-size="12" text-anchor="middle" font-family="Zen Kaku Gothic New, sans-serif">${t}</text>`; };
+  mark(1868, 70, '平面交差'); mark(2330, 40, '分岐器'); mark(2110, -150, '立体交差');
+  svg += `<text x="6" y="${Y(0) - 8}" fill="#A9B2C8" font-size="12">← 潮見台</text><text x="${W - 6}" y="${Y(0) - 8}" fill="#A9B2C8" font-size="12" text-anchor="end">山ノ口 →</text>`;
+  svg += '</svg>';
+  $('netmap').innerHTML = svg;
+}
+
 (async function main() {
+  buildTitle();
   const pct = $('loadPct');
   const pmrem = new THREE.PMREMGenerator(renderer);
   await new Promise<void>((res) => { const im = new Image(); im.onload = () => res(); im.onerror = () => res(); im.src = 'tex/sky.jpg'; });
   await build((p) => { pct.textContent = p; });
+  wireSignals();
   scene.environment = pmrem.fromEquirectangular(skyTex).texture;
   scene.environmentIntensity = 1;
   post = buildPost(renderer, scene, camera);

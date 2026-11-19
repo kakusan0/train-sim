@@ -2,12 +2,13 @@
 // 塗装の金属の室内、丸い計器の列、表示灯、スイッチ盤、マスコン（左）とブレーキ弁（右）、時刻表差し、天井の機器箱、配線
 import * as THREE from 'three';
 import { Sim, kmh, EB } from './sim';
-import { STATIONS, fmtTime } from './route';
+import { HIKARI, Route, fmtTime } from './route';
 import { merge } from './world/geo';
 
 export interface Cab {
   group: THREE.Group;
   update(sim: Sim, dt: number, opts: { wipers: boolean; guide: boolean; dist: number | null }): void;
+  setRoute(r: Route): void;
 }
 
 // ---- 塗装（使い込んだ金属の塗り）を作る ----
@@ -75,13 +76,15 @@ function dialTex(d: Dial): THREE.CanvasTexture {
   return t;
 }
 
-function timetableTex(): THREE.CanvasTexture {
+function timetableTex(route: Route): THREE.CanvasTexture {
+  const STATIONS = route.stations;
   const cv = document.createElement('canvas'); cv.width = 512; cv.height = 768;
   const c = cv.getContext('2d')!;
   c.fillStyle = '#f2efe4'; c.fillRect(0, 0, 512, 768);
   c.fillStyle = '#1a1a1a'; c.font = '900 40px "Zen Kaku Gothic New", sans-serif'; c.textBaseline = 'top';
-  c.fillText('ひかり野線 普通 1321', 24, 22);
-  c.font = '700 24px "Zen Kaku Gothic New", sans-serif'; c.fillText('2 両　潮見台 → 山ノ口', 24, 76);
+  c.fillStyle = route.color; c.fillRect(0, 0, 512, 10); c.fillStyle = '#1a1a1a';
+  c.fillText(`${route.name} 普通`, 24, 22);
+  c.font = '700 24px "Zen Kaku Gothic New", sans-serif'; c.fillText(`2 両　${STATIONS[0].name} → ${STATIONS[STATIONS.length - 1].name}`, 24, 76);
   c.strokeStyle = '#1a1a1a'; c.lineWidth = 3; c.strokeRect(16, 120, 480, 600);
   c.lineWidth = 1.5;
   ['駅', '着', '発', '制限'].forEach((h, i) => c.fillText(h, [30, 200, 320, 430][i], 132));
@@ -92,7 +95,7 @@ function timetableTex(): THREE.CanvasTexture {
     c.font = '700 30px "Share Tech Mono", monospace';
     c.fillText(i === 0 ? '' : fmtTime(st.arr).slice(3), 200, y + 6);
     c.fillText(i === STATIONS.length - 1 ? '' : fmtTime(st.dep).slice(3), 320, y + 6);
-    c.fillText(['45', '85', '85', '45'][i], 430, y + 6);
+    c.fillText(String(route.maxKmh), 430, y + 6);
     c.beginPath(); c.moveTo(16, y + 100); c.lineTo(496, y + 100); c.stroke();
   });
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
@@ -300,7 +303,8 @@ export function buildCab(): Cab {
   // 時刻表差し（右の柱の手前）と懐中時計
   const tt = new THREE.Group(); tt.position.set(1.12, -0.36, -0.98); tt.rotation.x = -0.5; tt.rotation.y = -0.25; g.add(tt);
   add(new THREE.BoxGeometry(0.26, 0.36, 0.02), black, tt);
-  const sheet = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.32), new THREE.MeshStandardMaterial({ map: timetableTex(), roughness: 0.8 })); sheet.position.z = 0.012; tt.add(sheet);
+  const sheetM = new THREE.MeshStandardMaterial({ map: timetableTex(HIKARI), roughness: 0.8 });
+  const sheet = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.32), sheetM); sheet.position.z = 0.012; tt.add(sheet);
   const watchFace = new THREE.Mesh(new THREE.CircleGeometry(0.032, 32), new THREE.MeshStandardMaterial({ map: dialTex({ label: '', max: 12, step: 1, major: 3, unit: '' }), roughness: 0.4 }));
   watchFace.position.set(0.0, -0.13, 0.03); tt.add(watchFace);
   const watchRing = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.005, 8, 32), brass); watchRing.position.copy(watchFace.position); tt.add(watchRing);
@@ -350,7 +354,8 @@ export function buildCab(): Cab {
       if (!opts.wipers && Math.cos(wipeT) > 0.995) wipeT = 0;
     }
   };
-  return { group: g, update };
+  const setRoute = (r: Route) => { sheetM.map?.dispose(); sheetM.map = timetableTex(r); sheetM.needsUpdate = true; };
+  return { group: g, update, setRoute };
 }
 
 function notchArc(): THREE.CanvasTexture {

@@ -1,11 +1,13 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { at } from '../route';
+import { MAIN } from '../route';
+import type { Path } from '../net/path';
 
 /** 線路に沿った押し出し。profile は (横 d, 高さ y) の点列（railY からの相対高さ）。 */
 export function extrudeAlong(profile: [number, number][], s0: number, s1: number, step: number, opt: {
-  closed?: boolean; uScale?: number; vScale?: number; colors?: (i: number) => [number, number, number]; yAbs?: (s: number) => number;
+  closed?: boolean; uScale?: number; vScale?: number; colors?: (i: number) => [number, number, number]; yAbs?: (s: number) => number; path?: Path;
 } = {}): THREE.BufferGeometry {
+  const P = opt.path ?? MAIN;
   const rows: number[] = [];
   for (let s = s0; s < s1; s += step) rows.push(s);
   rows.push(s1);
@@ -16,7 +18,7 @@ export function extrudeAlong(profile: [number, number][], s0: number, s1: number
   const pos: number[] = [], uv: number[] = [], col: number[] = [];
   const us = opt.uScale ?? 1, vs = opt.vScale ?? 1;
   for (const s of rows) {
-    const f = at(s);
+    const f = P.at(s);
     const y0 = opt.yAbs ? opt.yAbs(s) : f.y;
     for (let i = 0; i < np; i++) {
       const [d, y] = profile[i];
@@ -74,8 +76,8 @@ export function merge(gs: THREE.BufferGeometry[]): THREE.BufferGeometry {
 }
 
 /** 線路の (s, d, 高さ) に置き、線路の向きにそろえる行列 */
-export function placeAt(s: number, d: number, y: number, yaw = 0, scale = 1): THREE.Matrix4 {
-  const f = at(s, d);
+export function placeAt(s: number, d: number, y: number, yaw = 0, scale = 1, path: Path = MAIN): THREE.Matrix4 {
+  const f = path.at(s, d);
   const m = new THREE.Matrix4().makeRotationY(-f.th + yaw);
   m.scale(new THREE.Vector3(scale, scale, scale));
   m.setPosition(f.x, y, f.z);

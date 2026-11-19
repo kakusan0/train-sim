@@ -15,7 +15,7 @@
   <section id="stopinfo" aria-label="次の停車駅">
     <div class="head">
       <div class="badge" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" fill="currentColor"/></svg><b id="dist" class="mono">---</b></div>
-      <div class="what"><b id="stopKind">停車</b><span><span id="nextSt">浜田</span><em class="cars">2 両</em></span></div>
+      <div class="what"><span id="lineName" class="line">ひかり野線</span><b id="stopKind">停車</b><span><span id="nextSt">浜田</span><em class="cars">2 両</em></span></div>
     </div>
     <div class="clock"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg><b id="clock" class="mono">07:00:00</b></div>
     <ol id="timeline"></ol>
@@ -63,9 +63,11 @@
 </div>
 <div id="title" class="screen">
   <div class="card">
-    <p class="eyebrow">ひかり野線　潮見台 → 山ノ口</p>
+    <p class="eyebrow">ひかり野線・あおば線・さざなみ線</p>
     <h1>ひかり野線 運転士</h1>
-    <p class="lead">海辺の町から山あいの終点まで、4 駅 5.8 km。時刻表どおりに走り、停止位置にぴたりと止めましょう。</p>
+    <p class="lead">3 つの路線が交わる浜田の町と、海辺から山あいまで。時刻表どおりに走り、停止位置にぴたりと止めましょう。ほかの路線にも列車が走っていて、交差では信号がすれ違いを守ります。</p>
+    <div id="netmap" role="img" aria-label="路線図"></div>
+    <fieldset class="routes"><legend>運転する路線</legend><div id="routeCards"></div></fieldset>
     <div class="opts">
       <fieldset><legend>むずかしさ</legend>
         <label><input type="radio" name="mode" value="easy" checked> かんたん<small>止まる位置の予測を表示</small></label>

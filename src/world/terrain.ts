@@ -1,6 +1,6 @@
 // 地形：線路に沿った細かい帯（左右 ±420 m）と、その外側の遠い山
 import * as THREE from 'three';
-import { at, nearest, zoneAt, LENGTH, TUNNEL, BRIDGE, Zone } from '../route';
+import { at, nearest, zoneAt, LENGTH, TUNNEL, BRIDGE, Zone, CITY } from '../route';
 import { tex } from './assets';
 
 // ---- ノイズ ----
@@ -85,6 +85,9 @@ export function ground(s: number, d: number, x: number, z: number, wz?: Record<Z
   if (tw > 0) h = Math.max(h, base + tw * (30 * (1 - smooth(20, 320, ad) * 0.7) + n1 * 12));
   if (cap) return { h, sand: 0, dirt: 0, forest: 1, paddy: 0 };
   h = h + (hFar - h) * farW;
+  // 都市部：線路から 440 m まで平らな町
+  const cw = smooth(CITY.from - 120, CITY.from, s) * (1 - smooth(CITY.to, CITY.to + 120, s));
+  if (cw > 0) { const k = cw * (1 - smooth(440, 540, ad)); h = h + (base - 0.85 + (n2 - 0.5) * 0.3 - h) * k; }
   // 路盤（築堤・切土）
   const inTunnel = s > TUNNEL.from && s < TUNNEL.to;
   const onBridge = s > BRIDGE.from && s < BRIDGE.to;
