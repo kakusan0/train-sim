@@ -3,7 +3,7 @@
 //   浜田は島式ホームの右側に着き、その先の分岐器でひかり野線の左の線路に合流して稲穂まで乗り入れる。
 // - さざなみ線：全線が高架の複線。浜田のホームの真上でひかり野線とあおば線をまたぐ（立体交差）。
 import { Path, intersect, Pose } from './path';
-import { MAIN, HIKARI, Route, Station, Signal, T, stationSignals, TRACK_GAP } from '../route';
+import { MAIN, HIKARI, FREIGHT, Route, Station, Signal, T, stationSignals, TRACK_GAP } from '../route';
 
 // ---- あおば線の線路 ----
 /** 浜田の島式ホームの右側を通る線（ひかり野線の左 13 m） */
@@ -136,4 +136,6 @@ export const SAZANAMI: Route = {
   signals: stationSignals(SAZA_STATIONS, 400), whistles: [], maxKmh: 80,
 };
 export const ROUTES: Route[] = [HIKARI, AOBA, SAZANAMI];
-export const routeById = (id: string) => ROUTES.find((r) => r.id === id) ?? HIKARI;
+/** はじめの画面で選べる路線（ほかの路線の列車は ROUTES だけが走る） */
+export const PLAYABLE: Route[] = [...ROUTES, FREIGHT];
+export const routeById = (id: string) => PLAYABLE.find((r) => r.id === id) ?? HIKARI;

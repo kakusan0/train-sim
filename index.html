@@ -79,6 +79,11 @@
     <p class="lead">3 つの路線が交わる浜田の町と、海辺から山あいまで。時刻表どおりに走り、停止位置にぴたりと止めましょう。ほかの路線にも列車が走っていて、交差では信号がすれ違いを守ります。</p>
     <div id="netmap" role="img" aria-label="路線図"></div>
     <fieldset class="routes"><legend>運転する路線</legend><div id="routeCards"></div></fieldset>
+    <details class="link-box">
+      <summary>トラックのゲームとつなぐ（連携コード）</summary>
+      <p class="code-row"><label for="linkInput">連携コード</label> <input id="linkInput" maxlength="8" autocomplete="off" spellcheck="false" placeholder="8 文字"> <button type="button" id="linkUse" class="ghost">つなぐ</button></p>
+      <p id="linkNote" class="dim" aria-live="polite"></p>
+    </details>
     <fieldset class="legs"><legend>出発駅と到着駅</legend>
       <label>出発<select id="fromSt"></select></label><span aria-hidden="true">→</span><label>到着<select id="toSt"></select></label>
       <small id="legNote"></small>

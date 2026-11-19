@@ -26,6 +26,10 @@ export interface Route {
   signals: Signal[];
   whistles: Whistle[];
   maxKmh: number;
+  /** 走る線路（連動で使う）。書かなければ id と同じ */
+  track?: string;
+  /** 貨物列車（12ft コンテナを運ぶ。トラックのゲームとつながる） */
+  freight?: boolean;
 }
 
 export const TRAIN_LEN = 40; // 2 両
@@ -125,3 +129,18 @@ export function fmtTime(t: number): string {
   const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = Math.floor(t % 60);
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
+
+// ---- 貨物列車：ひかり野線の線路を、潮見台（となりの潮見貨物駅）から山ノ口まで。途中の駅は通過 ----
+const F_STATIONS: Station[] = [
+  { ...STATIONS[0], name: '潮見台', arr: T(7, 0, 0), dep: T(7, 0, 45) },
+  { ...STATIONS[STATIONS.length - 1], arr: T(7, 8, 0), dep: T(7, 8, 0) },
+];
+const F_SIGNALS: Signal[] = stationSignals(F_STATIONS);
+for (const s of [1100, 2150 + 25, 3000, 3950 + 25, 4900]) F_SIGNALS.push({ s, kind: 'block' });
+F_SIGNALS.sort((a, b) => a.s - b.s);
+export const FREIGHT: Route = {
+  id: 'freight', name: '貨物列車', kana: 'かもつれっしゃ', color: '#8a2747',
+  note: '潮見貨物駅で待つ 12ft コンテナを積んで、途中の駅は通過して山ノ口へ。トラックのゲームとつながる',
+  path: MAIN, stations: F_STATIONS, limits: LIMITS, signals: F_SIGNALS, whistles: WHISTLES, maxKmh: 75,
+  track: 'hikari', freight: true,
+};

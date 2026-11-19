@@ -184,3 +184,10 @@ th:first-child, td:first-child { text-align: left; }
 #cpFlash.show { opacity: 1; } #cpFlash.ok { background: rgba(28,90,52,0.85); color: #CFF7DD; } #cpFlash.ng { background: rgba(110,28,24,0.85); color: #FFD9D5; }
 @media (pointer: coarse) { #cpbar { width: min(440px, 52vw); top: 40px; } .cpcard { padding: 6px 10px; } .cpcard .txt small { display: none; } #cpFlash { top: 128px; font-size: 15px; } }
 @media (max-height: 500px) and (pointer: coarse) { #cpbar { top: 34px; gap: 4px; } #cpbar .ends { display: none; } #sub { top: auto; bottom: 8px; } }
+
+/* トラックのゲームとつなぐ */
+.link-box { border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; padding: 6px 10px; margin: 8px 0; }
+.link-box summary { cursor: pointer; font-weight: 700; min-height: 32px; display: flex; align-items: center; }
+.code-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.code-row input { width: 9em; min-height: 36px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.3); color: inherit; font-family: 'Share Tech Mono', monospace; font-size: 16px; padding: 0 8px; text-transform: uppercase; }
+#freightRes p { margin: 4px 0; }

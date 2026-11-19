@@ -84,3 +84,29 @@ describe('連動と自動運転', () => {
     expect(s.finished).toBe(true);
   });
 });
+
+describe('貨物列車（トラックのゲームとつながる）', () => {
+  beforeEach(() => { ILK.clear(); wireSignals(); });
+  it('途中の駅は通過しても減点されず、山ノ口で止まって終わる', async () => {
+    const { FREIGHT } = await import('../src/route');
+    const f = createSim('normal', FREIGHT);
+    ILK.add(simRef('freight', f));
+    run([f], 15 * 60);
+    expect(f.finished).toBe(true);
+    expect(f.legs.map((l) => FREIGHT.stations[l.station].name)).toEqual(['山ノ口']);
+    const notes = f.legs.flatMap((l) => l.notes);
+    expect(notes.filter((n) => n.includes('通過') || n.includes('ATS') || n.includes('赤信号'))).toEqual([]);
+    expect(Math.abs(f.legs[0].posErr!)).toBeLessThan(3);
+  });
+  it('あおば線・さざなみ線と一緒に走っても、ATS にかからず走りきる（ひかり野線の線路を使う）', async () => {
+    const { FREIGHT } = await import('../src/route');
+    expect(FREIGHT.track).toBe('hikari');
+    const sims = [createSim('normal', FREIGHT), ...ROUTES.filter((r) => r.id !== 'hikari').map((r) => createSim('normal', r))];
+    sims.forEach((s, i) => ILK.add(simRef('t' + i, s)));
+    run(sims, 20 * 60);
+    for (const s of sims) {
+      expect(s.finished, s.route.name).toBe(true);
+      expect(s.legs.flatMap((l) => l.notes).filter((n) => n.includes('ATS') || n.includes('赤信号')), s.route.name).toEqual([]);
+    }
+  });
+});

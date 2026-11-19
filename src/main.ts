@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { CSM } from 'three/examples/jsm/csm/CSM.js';
 import { at, TUNNEL, CROSSINGS, TRACK_GAP, TRAIN_LEN, fmtTime, HIKARI, Route } from './route';
-import { ROUTES, routeById, aobaToMain, AOBA } from './net/network';
+import { ROUTES, PLAYABLE, routeById, aobaToMain, AOBA } from './net/network';
+import { makeFreight, type Box12 } from './freight';
+import { Link, LINK_API } from './link';
 import { ILK, wireSignals, simRef, TrainRef } from './net/interlock';
 import { autopilot } from './ai';
 import { buildCheckpoints, judgeCheckpoints, nextCheckpoint, Checkpoint } from './checkpoints';
@@ -436,10 +438,43 @@ function showResult() {
     <div style="overflow-x:auto"><table><thead><tr><th>駅</th><th>停止位置</th><th>到着</th><th>乗り心地</th><th>加点</th><th>減点</th><th>合計</th></tr></thead><tbody>${rows}</tbody></table></div>
     ${cpSummary()}
     ${notes.length ? `<p class="dim">気をつけたいこと：${notes.join('・')}</p>` : '<p class="dim">安全運転でした。</p>'}
+    ${sim.route.freight ? '<div id="freightRes" class="dim">山ノ口に着いたコンテナを知らせています…</div>' : ''}
     <button class="primary" id="again">もう一度運転する</button></div>`;
   el.hidden = false;
+  if (sim.route.freight && !freightPosted && sim.end === sim.route.stations.length - 1) { freightPosted = true; void reportFreight(); }
   $('again').addEventListener('click', () => { el.hidden = true; startRun(); });
 }
+
+// ---- 貨物列車とトラックのゲームのつながり ----
+const link = new Link();
+let freightBoxes: Box12[] = [];
+let freightLinked = false, freightPosted = false;
+async function refreshFreight() {
+  const w = await link.waiting();
+  freightBoxes = w.boxes; freightLinked = w.linked;
+  const note = $('linkNote');
+  if (!LINK_API) note.textContent = 'つなぎ先（トラックのゲームの公開先）がまだ設定されていません。仮のコンテナで走れます。';
+  else if (!link.code) note.textContent = 'トラックのゲームで作った連携コードを入れると、トラックで駅に運んだコンテナを貨物列車で運べます。';
+  else if (!w.linked) note.textContent = 'つながりません。いまは仮のコンテナで走れます。';
+  else note.textContent = `つながっています（${link.code}）。潮見貨物駅で待つ山ノ口あて：${w.boxes.length} 個${w.boxes.length ? `（${w.boxes.map((b) => b.contents).join('・')}）` : '。トラックで駅へ運ぶと積めます'}`;
+}
+async function reportFreight() {
+  const el = document.getElementById('freightRes');
+  const r = await link.arrive();
+  if (!el) return;
+  if (!r) { el.textContent = freightLinked ? '知らせられませんでした（電波がないかもしれません）。' : '仮のコンテナを山ノ口に届けました。トラックのゲームとつなぐと、荷物が行き来します。'; return; }
+  el.innerHTML = '';
+  const p1 = document.createElement('p'); p1.textContent = `山ノ口に届けたコンテナ：${r.carried.length ? r.carried.map((b) => `${b.num}（${b.contents}）`).join('・') : 'なし'}`;
+  const p2 = document.createElement('p'); p2.textContent = `帰りの列車が、町あてのコンテナ ${r.arrived.length} 個を潮見貨物駅へ持ち帰りました。トラックのゲームの依頼に出ます。`;
+  el.append(p1, p2);
+}
+$('linkUse').addEventListener('click', async () => {
+  const v = ($('linkInput') as HTMLInputElement).value;
+  const c = await link.use(v);
+  if (!c) $('linkNote').textContent = 'コードが見つかりません（8 文字の英数字。トラックのゲームのはじめの画面で作れます）';
+  void refreshFreight();
+});
+void refreshFreight();
 
 function openHelp() { paused = true; $('help').hidden = false; }
 function closeHelp() { paused = false; $('help').hidden = true; }
@@ -461,7 +496,9 @@ function startRun() {
   if (s0 > 0) { sim.s = s0; sim.at = -1; sim.served = false; sim.door = 'closed'; sim.notch = 0; sim.v = Number(params.get('v') ?? 60) / 3.6; sim.next = Math.max(1, ST.findIndex((st) => st.stop > s0 + 1)); sim.passedSig = route.signals.filter((x) => x.s <= s0).length; sim.t = ST[Math.max(0, sim.next - 1)].dep + 30; }
   // 自分の列車の色
   scene.remove(myTrain.group);
-  myTrain = makeTrain(route.color); scene.add(myTrain.group); finalize(myTrain.group);
+  // 貨物列車は、潮見貨物駅で待つコンテナを積んだ機関車と貨車
+  myTrain = route.freight ? makeFreight(freightBoxes) : makeTrain(route.color); scene.add(myTrain.group); finalize(myTrain.group);
+  freightPosted = false;
   cab.setRoute(route);
   // 連動とほかの列車
   ILK.clear();
@@ -472,7 +509,7 @@ function startRun() {
   ILK.add(simRef('player', sim));
   for (const r of ROUTES) {
     dummies.set(r.id, createSim('normal', r));
-    if (r === route) continue;
+    if (r === route || (route.track ?? route.id) === r.id) continue; // 同じ線路の列車は出さない（貨物列車のときのひかり野線）
     const ai = createSim('normal', r);
     ai.t = sim.t;
     const view = makeTrain(r.color); scene.add(view.group); finalize(view.group);
@@ -490,7 +527,9 @@ function startRun() {
   cps = buildCheckpoints(sim);
   if (s0 > 0) for (const c of cps) if (c.leg < sim.next || (c.leg === sim.next && c.s < s0)) c.result = 'ok'; // 途中から始めたとき（確認用）
   cpLegKey = '';
-  subtitle(`${route.name}　${ST[sim.start].name} → ${ST[sim.end].name}。${ST[sim.start].name}・発車 ${fmtTime(ST[sim.start].dep)}。発車メロディのあと、O でドアを閉めます`);
+  subtitle(route.freight
+    ? `貨物列車　潮見台（潮見貨物駅）→ 山ノ口。12ft コンテナ ${freightBoxes.length} 個を積んでいます${freightLinked ? '（トラックのゲームとつながっています）' : '（仮の荷物）'}。途中の駅は通過します`
+    : `${route.name}　${ST[sim.start].name} → ${ST[sim.end].name}。${ST[sim.start].name}・発車 ${fmtTime(ST[sim.start].dep)}。発車メロディのあと、O でドアを閉めます`);
 }
 
 /** ほかの路線の列車を進める */
@@ -574,17 +613,19 @@ function updateCrossings(time: number, camPos: THREE.Vector3): number {
 // ---- メインループ ----
 let exposure = 1;
 const clock = new THREE.Clock();
+const AUTODRIVE = Number(params.get('autodrive') ?? 0);
 const camPos = new THREE.Vector3();
 let frame = 0;
 function loop(now = performance.now()) {
   requestAnimationFrame(loop);
   const t0 = performance.now();
-  const dt = Math.min(0.1, clock.getDelta());
+  // 確かめる用：?autodrive=8 で、自分の列車を自動運転にして 8 倍の速さで進める
+  const dt = Math.min(0.1, clock.getDelta()) * (AUTODRIVE || 1);
   uTime.value += dt;
   if (running && !paused && !needRotate) {
     const sub = Math.ceil(dt / (1 / 120));
     ILK.update();
-    for (let i = 0; i < sub; i++) step(sim, dt / sub);
+    for (let i = 0; i < sub; i++) { if (AUTODRIVE) autopilot(sim); step(sim, dt / sub); }
     handleEvents(sim.events);
     for (const c of judgeCheckpoints(cps, sim)) cpFlash(c);
     updateAis(dt);
@@ -702,7 +743,7 @@ addEventListener('resize', () => {
 // ---- 路線を選ぶ画面：カードと路線図 ----
 function buildTitle() {
   const fmtLen = (m: number) => `${(m / 1000).toFixed(1)} km`;
-  const cards = ROUTES.map((r, i) => {
+  const cards = PLAYABLE.map((r, i) => {
     const st = r.stations;
     const len = st[st.length - 1].stop - st[0].stop;
     const min = Math.round((st[st.length - 1].arr - st[0].dep) / 60);

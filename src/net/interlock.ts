@@ -98,7 +98,7 @@ export function wireSignals() {
 
 /** Sim の列車を連動に登録する */
 export function simRef(id: string, sim: Sim): TrainRef {
-  const key = sim.route.id as RangeKey;
+  const key = (sim.route.track ?? sim.route.id) as RangeKey;
   return {
     id, key, dir: 1, sim,
     s: () => sim.s,
