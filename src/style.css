@@ -156,3 +156,31 @@ th:first-child, td:first-child { text-align: left; }
 .routes .sw { width: 14px; height: 14px; border-radius: 4px; background: var(--c); }
 .routes label small { grid-column: 2 / -1; padding-left: 0; width: auto; }
 #stopinfo .line { justify-self: end; font-size: 12px; font-weight: 700; color: #fff; border-radius: 4px; padding: 1px 8px; font-style: normal; text-shadow: none; }
+
+/* 出発駅と到着駅 */
+.legs { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.legs label { display: flex; gap: 8px; align-items: center; font-weight: 700; }
+.legs select { font: inherit; color: var(--text); background: #161C2B; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; min-height: 44px; }
+.legs small { width: 100%; color: var(--dim); font-size: 12px; }
+
+/* チェックポイント（上の中央） */
+#cpbar { position: absolute; left: 50%; top: 44px; transform: translateX(-50%); width: min(560px, 46vw); display: grid; gap: 6px; text-shadow: 0 1px 3px #000; }
+#cpbar .ends { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; color: #fff; }
+#cpbar .track { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.18); box-shadow: 0 1px 4px rgba(0,0,0,0.5); }
+#cpbar .track b { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; transform: translate(-50%, -50%); background: #fff; border: 2px solid #0B0D12; }
+#cpbar .track b.ok { background: var(--green); } #cpbar .track b.ng { background: var(--red); }
+#cpbar .track b.next { width: 16px; height: 16px; background: var(--amber); box-shadow: 0 0 0 3px rgba(255,179,71,0.35); }
+#cpbar .track .me { position: absolute; top: 50%; width: 0; height: 0; transform: translate(-50%, -110%); border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 10px solid #fff; z-index: 2; }
+.cpcard { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 12px; background: rgba(10,13,20,0.72); border: 1px solid var(--line); text-shadow: none; }
+.cpcard.near { border-color: var(--amber); box-shadow: 0 0 0 2px rgba(255,179,71,0.35); }
+.cpcard .key { min-width: 44px; text-align: center; padding: 6px 8px; border-radius: 8px; background: var(--amber); color: #0B0D12; font-weight: 700; font-size: 15px; }
+.cpcard .txt { display: grid; gap: 2px; min-width: 0; }
+.cpcard .txt b { font-size: 15px; }
+.cpcard .txt small { font-size: 12px; color: var(--dim); }
+.cpcard .dist { font-size: 15px; color: #fff; white-space: nowrap; }
+.cpcard[hidden] { display: none; }
+#cpbar .count { justify-self: end; font-size: 12px; color: #E8ECF5; background: rgba(10,13,20,0.6); border-radius: 999px; padding: 2px 10px; text-shadow: none; }
+#cpFlash { position: absolute; left: 50%; top: 176px; transform: translateX(-50%); font-size: 18px; font-weight: 900; padding: 4px 14px; border-radius: 999px; opacity: 0; transition: opacity 0.25s; }
+#cpFlash.show { opacity: 1; } #cpFlash.ok { background: rgba(28,90,52,0.85); color: #CFF7DD; } #cpFlash.ng { background: rgba(110,28,24,0.85); color: #FFD9D5; }
+@media (pointer: coarse) { #cpbar { width: min(440px, 52vw); top: 40px; } .cpcard { padding: 6px 10px; } .cpcard .txt small { display: none; } #cpFlash { top: 128px; font-size: 15px; } }
+@media (max-height: 500px) and (pointer: coarse) { #cpbar { top: 34px; gap: 4px; } #cpbar .ends { display: none; } #sub { top: auto; bottom: 8px; } }

@@ -14,7 +14,7 @@ export function autopilot(sim: Sim) {
     else setNotch(sim, -4);
     return;
   }
-  if (sim.next >= R.stations.length) { setNotch(sim, -6); return; }
+  if (sim.next > sim.end) { setNotch(sim, -6); return; }
   const st = R.stations[sim.next];
   // 止まる所：駅の停止位置か、赤信号の 20 m 手前
   const stopAt = Math.min(st.stop, Number.isFinite(red) ? sim.s + red - 20 : Infinity);

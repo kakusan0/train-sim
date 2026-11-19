@@ -12,6 +12,17 @@
 <canvas id="gl"></canvas>
 <div id="hud" hidden>
   <div id="topbar"><span class="k">得点</span><b id="score" class="mono">0</b><span class="k">点</span></div>
+  <section id="cpbar" aria-label="この区間のチェックポイント">
+    <div class="ends"><span id="cpFrom">潮見台</span><span id="cpTo">浜田</span></div>
+    <div class="track" id="cpTrack"><i class="me" id="cpMe"></i></div>
+    <div id="cpNext" class="cpcard" aria-live="polite">
+      <span class="key mono" id="cpKey">K</span>
+      <div class="txt"><b id="cpTitle">場内信号の喚呼</b><small id="cpHint">K で喚呼</small></div>
+      <span class="dist mono" id="cpDist">あと 230 m</span>
+    </div>
+    <div id="cpCount" class="count mono"></div>
+  </section>
+  <div id="cpFlash" aria-live="polite"></div>
   <section id="stopinfo" aria-label="次の停車駅">
     <div class="head">
       <div class="badge" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z" fill="currentColor"/></svg><b id="dist" class="mono">---</b></div>
@@ -68,6 +79,10 @@
     <p class="lead">3 つの路線が交わる浜田の町と、海辺から山あいまで。時刻表どおりに走り、停止位置にぴたりと止めましょう。ほかの路線にも列車が走っていて、交差では信号がすれ違いを守ります。</p>
     <div id="netmap" role="img" aria-label="路線図"></div>
     <fieldset class="routes"><legend>運転する路線</legend><div id="routeCards"></div></fieldset>
+    <fieldset class="legs"><legend>出発駅と到着駅</legend>
+      <label>出発<select id="fromSt"></select></label><span aria-hidden="true">→</span><label>到着<select id="toSt"></select></label>
+      <small id="legNote"></small>
+    </fieldset>
     <div class="opts">
       <fieldset><legend>むずかしさ</legend>
         <label><input type="radio" name="mode" value="easy" checked> かんたん<small>止まる位置の予測を表示</small></label>

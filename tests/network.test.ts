@@ -50,7 +50,7 @@ describe('連動と自動運転', () => {
       // 合流の先の同じ線路で、2 本の列車が重ならない
       const h = sims[0], a = sims[1];
       const am = a.s >= AOBA_OWN ? MERGE_S + (a.s - AOBA_OWN) : null;
-      if (am !== null && h.s > MERGE_S - 50) minGap = Math.min(minGap, Math.abs(h.s - am) - TRAIN_LEN);
+      if (am !== null && h.s > MERGE_S - 50 && !(a.finished && a.t - a.finishedAt > 25)) minGap = Math.min(minGap, Math.abs(h.s - am) - TRAIN_LEN);
     });
     for (const s of sims) {
       expect(s.finished, s.route.name).toBe(true);

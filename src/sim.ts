@@ -23,6 +23,8 @@ export interface SimEvent { type: string; text?: string; value?: number; }
 
 export interface Sim {
   route: Route;
+  /** 出発駅と到着駅（駅の番号）。途中の駅から途中の駅までの運転もできる */
+  start: number; end: number;
   mode: Mode;
   t: number; s: number; v: number; a: number;
   notch: number; brake: number; power: number; // 実際のブレーキの効き（m/s²）
@@ -39,6 +41,7 @@ export interface Sim {
   doorOpenedAt: number;
   jerk: number; lastA: number;
   finished: boolean;
+  finishedAt: number;
   events: SimEvent[];
   odo: number;
 }
@@ -47,13 +50,15 @@ const newLeg = (station: number): LegScore => ({
   station, posErr: null, arrErr: null, depErr: null, pos: 0, time: 0, comfort: 20, bonus: 0, penalty: 0, notes: [],
 });
 
-export function createSim(mode: Mode = 'normal', route: Route = HIKARI): Sim {
-  const st = route.stations[0];
+export function createSim(mode: Mode = 'normal', route: Route = HIKARI, start = 0, end = route.stations.length - 1): Sim {
+  start = Math.max(0, Math.min(route.stations.length - 2, start));
+  end = Math.max(start + 1, Math.min(route.stations.length - 1, end));
+  const st = route.stations[start];
   return {
-    route, mode, t: st.arr, s: st.stop, v: 0, a: 0, notch: -4, brake: 0.5, power: 0,
-    door: 'open', doorT: 0, at: 0, next: 1, sigLimit: route.maxKmh, passedSig: 0,
-    ats: 'off', atsT: 0, legs: [], leg: newLeg(1), called: new Set(), announced: false, horned: new Set(),
-    stoppedAt: st.arr, served: true, doorOpenedAt: st.arr - 20, jerk: 0, lastA: 0, finished: false,
+    route, start, end, mode, t: st.arr, s: st.stop, v: 0, a: 0, notch: -4, brake: 0.5, power: 0,
+    door: 'open', doorT: 0, at: start, next: start + 1, sigLimit: route.maxKmh, passedSig: route.signals.filter((x) => x.s <= st.stop).length,
+    ats: 'off', atsT: 0, legs: [], leg: newLeg(start + 1), called: new Set(), announced: false, horned: new Set(),
+    stoppedAt: st.arr, served: true, doorOpenedAt: st.arr - 20, jerk: 0, lastA: 0, finished: false, finishedAt: 0,
     events: [], odo: 0,
   };
 }
@@ -62,7 +67,7 @@ export const kmh = (v: number) => v * 3.6;
 
 export function aspectOf(sig: Signal, sim: Sim): Aspect {
   if (sig.dyn) return sig.dyn(sim, sim.t);
-  if (sig.kind === 'block') return 'G';
+  if (sig.kind === 'block' || sig.kind === 'interlock') return 'G';
   if (sig.kind === 'home') return 'Y';
   const st = sim.route.stations[sig.station!];
   // 出発信号：発車 10 秒前に青。それまでは赤
@@ -127,7 +132,7 @@ export function toggleDoor(sim: Sim) {
       sim.leg.arrErr = arr;
       sim.leg.time = Math.max(0, Math.round(30 - Math.max(0, Math.abs(arr) - 3)));
       emit(sim, 'stop-result', undefined, sim.at);
-      if (sim.at === sim.route.stations.length - 1) finish(sim);
+      if (sim.at === sim.end) finish(sim);
     }
   } else if (sim.door === 'open') {
     if (sim.t - sim.doorOpenedAt < 8) return emit(sim, 'msg', 'お客さまの乗り降りを待っています');
@@ -137,6 +142,7 @@ export function toggleDoor(sim: Sim) {
 
 function finish(sim: Sim) {
   sim.finished = true;
+  sim.finishedAt = sim.t;
   sim.legs.push(sim.leg);
   emit(sim, 'finish');
 }
@@ -164,7 +170,7 @@ export function pointCall(sim: Sim): string | null {
       return text;
     }
   }
-  if (sim.next < sim.route.stations.length) {
+  if (sim.next < (sim.end + 1)) {
     const d = sim.route.stations[sim.next].stop - sim.s;
     if (d > 0 && d < 400) {
       const key = `stop${sim.next}`;
@@ -180,10 +186,10 @@ export function pointCall(sim: Sim): string | null {
 
 /** 車内放送 */
 export function announce(sim: Sim): boolean {
-  if (sim.next >= sim.route.stations.length || sim.at >= 0) return false;
+  if (sim.next >= (sim.end + 1) || sim.at >= 0) return false;
   const st = sim.route.stations[sim.next];
   const d = st.stop - sim.s;
-  const last = sim.next === sim.route.stations.length - 1;
+  const last = sim.next === sim.end;
   const tr = st.transfer ? `${st.transfer}は、お乗り換えです。` : '';
   const text = `まもなく${st.name}、${st.name}です。${last ? '終点です。' : ''}${tr}お出口は${st.side === 'R' ? '右' : '左'}側です。`;
   if (d > 250 && d < 1400 && !sim.announced) {
@@ -258,7 +264,7 @@ export function step(sim: Sim, dt: number) {
     if (brakeA > 0.75) { sim.leg.comfort = Math.max(0, sim.leg.comfort - 6); sim.leg.notes.push('停止時の衝撃が大きい'); emit(sim, 'jolt'); }
     else if (brakeA > 0.5) { sim.leg.comfort = Math.max(0, sim.leg.comfort - 2); }
     sim.stoppedAt = sim.t;
-    if (sim.next < sim.route.stations.length) {
+    if (sim.next < (sim.end + 1)) {
       const err = sim.s - sim.route.stations[sim.next].stop;
       if (err > -60 && err < 30) {
         if (Math.abs(err) <= 10) { sim.at = sim.next; emit(sim, 'arrive', sim.route.stations[sim.at].name, err); }
@@ -273,7 +279,7 @@ export function step(sim: Sim, dt: number) {
     else {
       const st = sim.route.stations[sim.at];
       const late = sim.t - st.dep;
-      if (sim.at > 0) { sim.legs.push(sim.leg); sim.leg = newLeg(sim.at + 1); }
+      if (sim.at > sim.start) { sim.legs.push(sim.leg); sim.leg = newLeg(sim.at + 1); }
       sim.leg.depErr = late;
       if (late < -2) { sim.leg.penalty += 10; sim.leg.notes.push('早発'); }
       emit(sim, 'depart', st.name, late);
@@ -282,13 +288,13 @@ export function step(sim: Sim, dt: number) {
     }
   }
   // 次の駅を止まらずに過ぎた
-  if (sim.at < 0 && sim.next < sim.route.stations.length && sim.s > sim.route.stations[sim.next].stop + 30) {
+  if (sim.at < 0 && sim.next < (sim.end + 1) && sim.s > sim.route.stations[sim.next].stop + 30) {
     sim.leg.notes.push('停車駅を通過'); sim.leg.penalty += 30; sim.leg.posErr = sim.s - sim.route.stations[sim.next].stop;
     emit(sim, 'overrun', sim.route.stations[sim.next].name);
     sim.legs.push(sim.leg);
     sim.next++;
     sim.leg = newLeg(sim.next);
-    if (sim.next >= sim.route.stations.length) { sim.finished = true; emit(sim, 'finish'); }
+    if (sim.next >= (sim.end + 1)) { sim.finished = true; sim.finishedAt = sim.t; emit(sim, 'finish'); }
   }
 
   // 信号の通過
@@ -340,7 +346,7 @@ export function totalScore(sim: Sim): number {
   return sim.legs.reduce((a, l) => a + legTotal(l), 0);
 }
 export function rank(sim: Sim): string {
-  const max = (sim.route.stations.length - 1) * 100;
+  const max = (sim.end - sim.start) * 100;
   const r = totalScore(sim) / max;
   return r >= 0.95 ? 'S' : r >= 0.8 ? 'A' : r >= 0.6 ? 'B' : r >= 0.4 ? 'C' : 'D';
 }

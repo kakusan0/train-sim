@@ -4,6 +4,7 @@ import { at, TUNNEL, CROSSINGS, TRACK_GAP, TRAIN_LEN, fmtTime, HIKARI, Route } f
 import { ROUTES, routeById, aobaToMain, AOBA } from './net/network';
 import { ILK, wireSignals, simRef, TrainRef } from './net/interlock';
 import { autopilot } from './ai';
+import { buildCheckpoints, judgeCheckpoints, nextCheckpoint, Checkpoint } from './checkpoints';
 import { buildLines, LinesWorld } from './world/lines';
 import {
   createSim, step, stepNotch, setNotch, toggleDoor, pointCall, announce, horn, kmh, currentLimit, notchLabel, EB,
@@ -319,7 +320,7 @@ function fmtDist(d: number) { return d > 999 ? `${(d / 1000).toFixed(2)} km` : `
 function updateHud() {
   const STATIONS = sim.route.stations;
   const at0 = sim.at >= 0;
-  const idx = Math.min(STATIONS.length - 1, at0 ? sim.at : sim.next);
+  const idx = Math.min(sim.end, at0 ? sim.at : sim.next);
   const st = STATIONS[idx];
   const dist = at0 ? null : STATIONS[sim.next].stop - sim.s;
   const sp = kmh(sim.v), lim = currentLimit(sim);
@@ -327,7 +328,7 @@ function updateHud() {
   const key = `${Math.round(sp * 2)}|${lim}`;
   if (key !== hudKey) { hudKey = key; drawSpeedo(sp, lim); }
   $('clock').textContent = fmtTime(sim.t);
-  $('stopKind').textContent = at0 ? (sim.at === STATIONS.length - 1 ? '終点' : '停車中') : '停車';
+  $('stopKind').textContent = at0 ? (sim.at === sim.end ? '終点' : '停車中') : '停車';
   $('nextSt').textContent = st.name;
   $('dist').textContent = dist === null ? '0 m' : fmtDist(dist);
   $('dist2').textContent = dist === null ? '---' : fmtDist(dist);
@@ -338,7 +339,7 @@ function updateHud() {
   const gr = sim.route.path.gradeAt(sim.s) * 1000;
   $('grade').textContent = `${gr >= 0 ? '+' : ''}${gr.toFixed(1)}‰`;
   // 次の駅の時刻（このあと 2 駅）
-  const tl = STATIONS.slice(idx, idx + 2).map((x, i) => {
+  const tl = STATIONS.slice(idx, Math.min(idx + 2, sim.end + 1)).map((x, i) => {
     const t = i === 0 && at0 ? x.dep : x.arr;
     return `<li><span>${x.name}</span><b class="mono">${fmtTime(t).slice(0, 5)}<small>${fmtTime(t).slice(5)}</small></b></li>`;
   }).join('');
@@ -360,9 +361,61 @@ function updateHud() {
   $('ats').textContent = sim.ats === 'brake' ? 'ATS ブレーキ' : 'ATS 警報';
   $('score').textContent = String(totalScore(sim) + (sim.finished ? 0 : Math.round(sim.leg.bonus - sim.leg.penalty)));
   // 発車メロディ：発車 25 秒前、ドアが開いているとき
-  if (at0 && sim.door === 'open' && sim.t > st.dep - 25 && melodyPlayed !== sim.at && sim.at < STATIONS.length - 1) {
+  if (at0 && sim.door === 'open' && sim.t > st.dep - 25 && melodyPlayed !== sim.at && sim.at < sim.end) {
     melodyPlayed = sim.at; sound.melody(); subtitle('発車メロディ。発車時刻が近づいたら O でドアを閉めます');
   }
+}
+
+// ---- チェックポイントの表示 ----
+let cps: Checkpoint[] = [];
+let cpLegKey = '', cpFlashT = 0;
+function cpFlash(c: Checkpoint) {
+  const el = $('cpFlash');
+  el.textContent = `${c.result === 'ok' ? '✓' : '✗'} ${c.title}${c.detail ? `（${c.detail}）` : ''}`;
+  el.className = `show ${c.result}`;
+  cpFlashT = 2.2;
+  if (c.result === 'ok') sound.tone(990, 0.12, 'sine', 0.06); else sound.tone(220, 0.25, 'square', 0.05);
+}
+function updateCpBar() {
+  const ST = sim.route.stations;
+  const leg = sim.at >= 0 ? Math.min(sim.end, sim.at === sim.end ? sim.end : sim.at + 1) : Math.min(sim.end, sim.next);
+  const a = ST[leg - 1].stop, b = ST[leg].stop;
+  const pct = (s: number) => `${Math.max(0, Math.min(100, ((s - a) / (b - a)) * 100)).toFixed(2)}%`;
+  const list = cps.filter((c) => c.leg === leg);
+  const next = nextCheckpoint(cps, sim);
+  const key = `${leg}|${list.map((c) => c.result).join('')}|${next?.id}`;
+  if (key !== cpLegKey) {
+    cpLegKey = key;
+    $('cpFrom').textContent = ST[leg - 1].name; $('cpTo').textContent = ST[leg].name;
+    const track = $('cpTrack');
+    track.querySelectorAll('b').forEach((x) => x.remove());
+    for (const c of list) {
+      const m = document.createElement('b');
+      m.className = c.result !== 'pending' ? c.result : c === next ? 'next' : '';
+      m.style.left = pct(c.s); m.title = c.title;
+      track.append(m);
+    }
+    const done = cps.filter((c) => c.result !== 'pending'), ok = done.filter((c) => c.result === 'ok');
+    $('cpCount').textContent = `チェックポイント ${ok.length}/${done.length} 合格・のこり ${cps.length - done.length}`;
+  }
+  $('cpMe').style.left = pct(sim.s);
+  const card = $('cpNext');
+  card.hidden = !next;
+  if (next) {
+    $('cpKey').textContent = next.key; $('cpTitle').textContent = next.title; $('cpHint').textContent = next.hint;
+    let dist: string, near: boolean;
+    if (next.kind === 'depart') { const t = ST[next.leg - 1].dep - sim.t; dist = t > 0 ? `発車まで ${Math.ceil(t)} 秒` : '発車時刻'; near = t < 25; }
+    else { const d = next.s - sim.s; dist = d > 999 ? `あと ${(d / 1000).toFixed(1)} km` : `あと ${Math.max(0, Math.round(d))} m`; near = d < Math.min(300, next.lead); }
+    $('cpDist').textContent = dist;
+    card.classList.toggle('near', near);
+  }
+}
+function cpSummary() {
+  const done = cps.filter((c) => c.result !== 'pending');
+  const ok = done.filter((c) => c.result === 'ok');
+  const ng = done.filter((c) => c.result === 'ng');
+  const list = ng.slice(0, 8).map((c) => `<li>${c.title}${c.detail ? `（${c.detail}）` : ''}</li>`).join('');
+  return `<p><b>チェックポイント ${ok.length} / ${done.length} 合格</b></p>${ng.length ? `<ul class="dim" style="margin:0;padding-left:20px">${list}</ul>` : ''}`;
 }
 
 function showResult() {
@@ -378,9 +431,10 @@ function showResult() {
   }).join('');
   const notes = [...new Set(sim.legs.flatMap((l) => l.notes))];
   el.innerHTML = `<div class="card">
-    <p class="eyebrow">運転の結果　${sim.route.name}　${STATIONS[0].name} → ${STATIONS[STATIONS.length - 1].name}</p>
-    <div style="display:flex;gap:20px;align-items:center"><span class="rank">${rank(sim)}</span><div><h2>${totalScore(sim)} 点</h2><span class="dim">満点 ${(STATIONS.length - 1) * 100}（加点で超えることがあります）</span></div></div>
+    <p class="eyebrow">運転の結果　${sim.route.name}　${STATIONS[sim.start].name} → ${STATIONS[sim.end].name}</p>
+    <div style="display:flex;gap:20px;align-items:center"><span class="rank">${rank(sim)}</span><div><h2>${totalScore(sim)} 点</h2><span class="dim">満点 ${(sim.end - sim.start) * 100}（加点で超えることがあります）</span></div></div>
     <div style="overflow-x:auto"><table><thead><tr><th>駅</th><th>停止位置</th><th>到着</th><th>乗り心地</th><th>加点</th><th>減点</th><th>合計</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${cpSummary()}
     ${notes.length ? `<p class="dim">気をつけたいこと：${notes.join('・')}</p>` : '<p class="dim">安全運転でした。</p>'}
     <button class="primary" id="again">もう一度運転する</button></div>`;
   el.hidden = false;
@@ -399,7 +453,9 @@ function chosenRoute(): Route {
 function startRun() {
   const mode = (document.querySelector<HTMLInputElement>('input[name=mode]:checked')?.value ?? 'easy') as Mode;
   const route = chosenRoute();
-  sim = createSim(mode, route);
+  const from = Number(params.get('from') ?? $<HTMLSelectElement>('fromSt').value ?? 0);
+  const to = Number(params.get('to') ?? $<HTMLSelectElement>('toSt').value ?? route.stations.length - 1);
+  sim = createSim(mode, route, from, to);
   const ST = route.stations;
   const s0 = Number(params.get('s'));
   if (s0 > 0) { sim.s = s0; sim.at = -1; sim.served = false; sim.door = 'closed'; sim.notch = 0; sim.v = Number(params.get('v') ?? 60) / 3.6; sim.next = Math.max(1, ST.findIndex((st) => st.stop > s0 + 1)); sim.passedSig = route.signals.filter((x) => x.s <= s0).length; sim.t = ST[Math.max(0, sim.next - 1)].dep + 30; }
@@ -431,7 +487,10 @@ function startRun() {
   $('hud').hidden = false;
   $('title').hidden = true;
   $('lineName').textContent = route.name; $('lineName').style.background = route.color;
-  subtitle(`${route.name}　${ST[0].name}・発車 ${fmtTime(ST[0].dep)}。発車メロディのあと、O でドアを閉めます`);
+  cps = buildCheckpoints(sim);
+  if (s0 > 0) for (const c of cps) if (c.leg < sim.next || (c.leg === sim.next && c.s < s0)) c.result = 'ok'; // 途中から始めたとき（確認用）
+  cpLegKey = '';
+  subtitle(`${route.name}　${ST[sim.start].name} → ${ST[sim.end].name}。${ST[sim.start].name}・発車 ${fmtTime(ST[sim.start].dep)}。発車メロディのあと、O でドアを閉めます`);
 }
 
 /** ほかの路線の列車を進める */
@@ -527,6 +586,7 @@ function loop(now = performance.now()) {
     ILK.update();
     for (let i = 0; i < sub; i++) step(sim, dt / sub);
     handleEvents(sim.events);
+    for (const c of judgeCheckpoints(cps, sim)) cpFlash(c);
     updateAis(dt);
     updateOthers(dt);
   }
@@ -560,7 +620,8 @@ function loop(now = performance.now()) {
   for (const im of track.sleepers) im.visible = im.boundingSphere!.center.distanceTo(camPos) < 450;
   for (const im of lines.sleepers) im.visible = im.boundingSphere!.center.distanceTo(camPos) < 450;
   post.grade.uniforms.uSpeed.value = view === 'cab' ? Math.min(1, Math.max(0, (sim.v - 8) / 20)) : 0;
-  if (running) updateHud();
+  if (running) { updateHud(); updateCpBar(); }
+  if (cpFlashT > 0 && (cpFlashT -= dt) <= 0) $('cpFlash').classList.remove('show');
   if (toastT > 0 && (toastT -= dt) <= 0) $('toast').classList.remove('show');
   if (subT > 0 && (subT -= dt) <= 0) $('sub').classList.remove('show');
   if (cardT > 0 && (cardT -= dt) <= 0) $('stopcard').hidden = true;
@@ -649,6 +710,22 @@ function buildTitle() {
       <small>${st.map((x) => x.name).join(' → ')}　${st.length} 駅・${fmtLen(len)}・約 ${min} 分<br>${r.note}</small></label>`;
   }).join('');
   $('routeCards').innerHTML = cards;
+  const fromSel = $<HTMLSelectElement>('fromSt'), toSel = $<HTMLSelectElement>('toSt');
+  const fill = () => {
+    const r = routeById(document.querySelector<HTMLInputElement>('input[name=route]:checked')?.value ?? 'hikari');
+    const st = r.stations;
+    const f = Math.min(Number(fromSel.dataset.r === r.id ? fromSel.value : 0), st.length - 2);
+    fromSel.innerHTML = st.slice(0, -1).map((x, i) => `<option value="${i}" ${i === f ? 'selected' : ''}>${x.name}</option>`).join('');
+    const tPrev = toSel.dataset.r === r.id ? Number(toSel.value) : st.length - 1;
+    const t = Math.max(f + 1, tPrev);
+    toSel.innerHTML = st.map((x, i) => (i > f ? `<option value="${i}" ${i === t ? 'selected' : ''}>${x.name}</option>` : '')).join('');
+    fromSel.dataset.r = toSel.dataset.r = r.id;
+    const len = st[t].stop - st[f].stop, min = Math.round((st[t].arr - st[f].dep) / 60);
+    $('legNote').textContent = `${t - f} 区間・${(len / 1000).toFixed(1)} km・約 ${min} 分。区間ごとのチェックポイントが画面の上に出ます。`;
+  };
+  document.querySelectorAll<HTMLInputElement>('input[name=route]').forEach((x) => x.addEventListener('change', () => { fromSel.dataset.r = ''; toSel.dataset.r = ''; fill(); }));
+  fromSel.addEventListener('change', fill); toSel.addEventListener('change', fill);
+  fill();
   // 路線図（浜田のまわり）：ひかり野線を横軸にした図（左が潮見台、右が山ノ口）
   const toUV = (x: number, z: number) => { const n = HIKARI.path.nearest(x, z, 5); return [n.s, -n.d] as [number, number]; };
   const pts = (P: import('./net/path').Path, a: number, b: number) => { const o: [number, number][] = []; for (let s = a; s <= b; s += 15) { const f = P.at(s); o.push(toUV(f.x, f.z)); } return o; };

@@ -102,9 +102,8 @@ export interface Zone { id: string; ranges: Partial<Record<'hikari' | 'aoba' | '
 /** 列車が入ると、ほかの列車は手前で止まる区間（経路ごとの s の範囲） */
 export const ZONES: Zone[] = [
   { id: 'diamond', ranges: { hikari: [DIAMOND.main0 - 12, DIAMOND.main0 + 12], aoba: [DIAMOND.aoba[0] - 12, DIAMOND.aoba[1] + 12], main4: [DIAMOND.main4 - 12, DIAMOND.main4 + 12] } },
-  { id: 'merge', ranges: { hikari: [AOBA_DIV_FROM + 20, MERGE_S + 15], aoba: [nearOn(AOBA_TRACK, AOBA_DIV_FROM + 20, AOBA_D), AOBA_OWN + 15] } },
-  // 合流の先は同じ線路：先の列車が稲穂のホームを出るまで、後の列車は入れない
-  { id: 'inaho', ranges: { hikari: [3000, 3962], aoba: [mainToAoba(3000), mainToAoba(3962)] } },
+  // 合流から稲穂のホームの先までは同じ線路：1 本ずつ通す（先の列車が稲穂を出るまで、後の列車は合流の手前で待つ）
+  { id: 'merge', ranges: { hikari: [AOBA_DIV_FROM + 20, 3962], aoba: [nearOn(AOBA_TRACK, AOBA_DIV_FROM + 20, AOBA_D), mainToAoba(3962)] } },
 ];
 
 // ---- 経路 ----

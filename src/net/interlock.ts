@@ -1,5 +1,5 @@
 // 連動：平面交差・合流・同じ線路を、2 本の列車が同時に使わないようにする
-// 列車が区間の手前（350 m 以内）に来て、発車できる状態なら、空いていれば進路を渡す（早い者勝ち）。
+// 列車が区間の手前（950 m 以内）に来て、発車できる状態なら、空いていれば進路を渡す（早い者勝ち）。
 // 最後尾が区間を抜けたら返す。進路を持たない列車の信号は赤になる。
 import { Route, TRAIN_LEN, HIKARI } from '../route';
 import { Sim } from '../sim';
@@ -22,7 +22,8 @@ export interface TrainRef {
   sim?: Sim;
 }
 
-const APPROACH = 350;
+// 信号の手前で ATS のパターンが効き始める前（信号の 700 m 手前より前）に進路を取る
+const APPROACH = 950;
 
 export class Interlock {
   trains: TrainRef[] = [];
@@ -52,7 +53,7 @@ export class Interlock {
       let best: TrainRef | null = null, bestD = Infinity;
       for (const t of this.trains) {
         const r = z.ranges[t.key];
-        if (!r) continue;
+        if (!r || t.gone()) continue;
         const s = t.s();
         const dist = t.dir > 0 ? r[0] - s : s - r[1]; // 区間の入口までの距離（負なら中にいる）
         const tail = s - t.dir * TRAIN_LEN;
@@ -85,12 +86,12 @@ export function wireSignals() {
   for (const sig of H) {
     if (sig.kind === 'home' && sig.station === 1) sig.dyn = (w) => (ILK.free('diamond', w) ? 'Y' : 'R');
     if (sig.kind === 'start' && sig.station === 1) sig.dyn = (w, t) => (startDep(HIKARI, 1, w as Sim, t) && ILK.free('merge', w) ? 'G' : 'R');
-    if (sig.kind === 'block' && sig.s === 3000) sig.dyn = (w) => (ILK.free('inaho', w) ? 'G' : 'R');
+    if (sig.kind === 'block' && sig.s === 3000) sig.dyn = (w) => (ILK.free('merge', w) ? 'G' : 'R');
   }
   for (const sig of A) {
     if (sig.kind === 'interlock') sig.dyn = (w) => (ILK.free('diamond', w) ? 'G' : 'R');
     if (sig.kind === 'start' && sig.station === 1) sig.dyn = (w, t) => (startDep(AOBA, 1, w as Sim, t) && ILK.free('merge', w) ? 'Y' : 'R');
-    if (sig.kind === 'block' && Math.abs(sig.s - mainToAoba(3000)) < 1) sig.dyn = (w) => (ILK.free('inaho', w) ? 'G' : 'R');
+    if (sig.kind === 'block' && Math.abs(sig.s - mainToAoba(3000)) < 1) sig.dyn = (w) => (ILK.free('merge', w) ? 'G' : 'R');
   }
   void DIAMOND;
 }
@@ -102,7 +103,8 @@ export function simRef(id: string, sim: Sim): TrainRef {
     id, key, dir: 1, sim,
     s: () => sim.s,
     ready: () => sim.finished ? false : sim.at < 0 || sim.t >= sim.route.stations[sim.at].dep - 15,
-    nextStop: () => (sim.at >= 0 ? Infinity : sim.next < sim.route.stations.length ? sim.route.stations[sim.next].stop : Infinity),
-    gone: () => sim.finished,
+    nextStop: () => (sim.at >= 0 ? Infinity : sim.next <= sim.end ? sim.route.stations[sim.next].stop : Infinity),
+    // 終点に着いた列車は、25 秒後に車庫へ入る（それまではホームをふさいでいる）
+    gone: () => sim.finished && sim.t - sim.finishedAt > 25,
   };
 }
