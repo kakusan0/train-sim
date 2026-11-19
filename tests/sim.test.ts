@@ -1,35 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { at, nearest, STATIONS, LENGTH, fmtTime } from '../src/route';
-import { createSim, step, setNotch, toggleDoor, currentLimit, kmh, totalScore, rank, Sim, nextSignal, aspectOf, legTotal } from '../src/sim';
+import { createSim, step, setNotch, toggleDoor, totalScore, rank, nextSignal, aspectOf, legTotal } from '../src/sim';
 
-/** かんたんな自動運転：制限と停止位置を守って走る */
-export function autopilot(sim: Sim) {
-  if (sim.at >= 0) {
-    const st = STATIONS[sim.at];
-    if (sim.door === 'closed' && !sim.served) toggleDoor(sim);
-    else if (sim.door === 'open' && sim.t >= st.dep - 6 && sim.t - sim.doorOpenedAt > 8) toggleDoor(sim);
-    else if (sim.door === 'closed' && sim.t >= st.dep) setNotch(sim, 3);
-    else setNotch(sim, -4);
-    return;
-  }
-  const st = STATIONS[sim.next];
-  const dist = st.stop - sim.s;
-  let lim = currentLimit(sim);
-  const ns = nextSignal(sim);
-  if (ns && ns.sig.kind === 'home' && ns.dist < 700) lim = Math.min(lim, 45);
-  const v = kmh(sim.v);
-  const req = (sim.v * sim.v) / (2 * Math.max(0.3, dist - 0.3)); // 必要な減速度
-  if (dist < 0.8) { setNotch(sim, -5); return; }
-  if (dist < 450 && req > 0.42) {
-    setNotch(sim, -Math.max(1, Math.min(8, Math.round(req / 0.12 + 0.5))));
-    return;
-  }
-  if (dist < 450 && v < 12) { setNotch(sim, v < 8 ? 1 : 0); return; }
-  const target = lim - 3;
-  if (v < target - 4) setNotch(sim, 4);
-  else if (v < target) setNotch(sim, 0);
-  else setNotch(sim, -Math.min(8, Math.ceil((v - target) / 1.5) + 1));
-}
+import { autopilot } from '../src/ai';
 
 describe('路線', () => {
   it('中心線はなめらかにつながり、近い点の逆算ができる', () => {

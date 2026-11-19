@@ -1,27 +1,48 @@
-// 架空の路線「ひかり野線」：海辺の町から山あいの終点まで。
-// 線路の中心線を 1 m ごとに求め、位置・向き・高さを返す。
+// 路線のデータ。ひかり野線（海辺の町から山あいの終点まで）は、ここで曲率と勾配から中心線を作る。
+// ほかの路線（net/network.ts）もこの形の Route として持つ。
+import { Path, interp, Frame } from './net/path';
+export type { Frame } from './net/path';
 
-export interface Station { name: string; kana: string; stop: number; arr: number; dep: number; }
+export interface Station { name: string; kana: string; stop: number; arr: number; dep: number; side?: 'L' | 'R'; transfer?: string; }
 export interface Limit { from: number; to: number; kmh: number; }
-export type SignalKind = 'home' | 'start' | 'block';
-export interface Signal { s: number; kind: SignalKind; station?: number; }
+export type SignalKind = 'home' | 'start' | 'block' | 'interlock';
+export interface Signal {
+  s: number; kind: SignalKind; station?: number;
+  /** 連動の信号：列車ごとの現示を返す（net/interlock.ts が設定する） */
+  dyn?: (who: unknown, t: number) => 'G' | 'Y' | 'R';
+  /** 青のかわりに出す「制限つきの進行」（分岐へ進むときなど） */
+  caution?: boolean;
+  /** 実物の信号機を、ほかの路線の信号機と共有している（その路線では描かない） */
+  shared?: boolean;
+}
 export interface Crossing { s: number; }
 export interface Whistle { s: number; }
 
-export const LENGTH = 5800;
+export interface Route {
+  id: string; name: string; kana: string; color: string; note: string;
+  path: Path;
+  stations: Station[];
+  limits: Limit[];
+  signals: Signal[];
+  whistles: Whistle[];
+  maxKmh: number;
+}
+
 export const TRAIN_LEN = 40; // 2 両
 export const TRACK_GAP = -4; // となりの線路（右側）
+export const PLATFORM_LEN = 100; // 停止位置から後ろへ
 
-// 時刻は「0 時からの秒」。07:00:00 始まり
-const T = (h: number, m: number, s = 0) => h * 3600 + m * 60 + s;
+// 時刻は「0 時からの秒」
+export const T = (h: number, m: number, s = 0) => h * 3600 + m * 60 + s;
 
+// ---- ひかり野線 ----
+export const LENGTH = 5800;
 export const STATIONS: Station[] = [
   { name: '潮見台', kana: 'しおみだい', stop: 260, arr: T(7, 0, 0), dep: T(7, 0, 45) },
-  { name: '浜田', kana: 'はまだ', stop: 2150, arr: T(7, 3, 40), dep: T(7, 4, 10) },
+  { name: '浜田', kana: 'はまだ', stop: 2150, arr: T(7, 3, 40), dep: T(7, 4, 10), transfer: 'さざなみ線・あおば線' },
   { name: '稲穂', kana: 'いなほ', stop: 3950, arr: T(7, 6, 50), dep: T(7, 7, 20) },
   { name: '山ノ口', kana: 'やまのくち', stop: 5650, arr: T(7, 10, 0), dep: T(7, 10, 0) },
 ];
-export const PLATFORM_LEN = 100; // 停止位置から後ろへ
 
 // 曲率の制御点 [s, 1/R]（正＝左カーブ）
 const CURV: [number, number][] = [
@@ -35,7 +56,6 @@ const GRADE: [number, number][] = [
   [0, 0], [600, 0], [700, 3], [1600, 3], [1700, 0], [2300, 0], [2400, 6], [3000, 6], [3100, 0],
   [4100, 0], [4200, 18], [5450, 18], [5530, 0], [LENGTH + 400, 0],
 ];
-const Y0 = 6;
 
 export const LIMITS: Limit[] = [
   { from: 0, to: 520, kmh: 45 },
@@ -46,11 +66,17 @@ export const LIMITS: Limit[] = [
 ];
 export const MAX_KMH = 85;
 
-export const SIGNALS: Signal[] = [];
-STATIONS.forEach((st, i) => {
-  if (i > 0) SIGNALS.push({ s: st.stop - 520, kind: 'home', station: i });
-  if (i < STATIONS.length - 1) SIGNALS.push({ s: st.stop + 25, kind: 'start', station: i });
-});
+/** 駅ごとの場内・出発信号を作る */
+export function stationSignals(stations: Station[], homeDist = 520): Signal[] {
+  const out: Signal[] = [];
+  stations.forEach((st, i) => {
+    if (i > 0) out.push({ s: st.stop - homeDist, kind: 'home', station: i });
+    if (i < stations.length - 1) out.push({ s: st.stop + 25, kind: 'start', station: i });
+  });
+  return out;
+}
+
+export const SIGNALS: Signal[] = stationSignals(STATIONS);
 for (const s of [1100, 3000, 4900]) SIGNALS.push({ s, kind: 'block' });
 SIGNALS.sort((a, b) => a.s - b.s);
 
@@ -62,82 +88,36 @@ export const WHISTLES: Whistle[] = [
   { s: TUNNEL.from - 200 },
 ];
 
+/** 都市部（浜田のまわり）。平らな町がひろく続く */
+export const CITY = { from: 1250, to: 2900 };
 export type Zone = 'coast' | 'town' | 'paddy' | 'forest';
 export function zoneAt(s: number): Zone {
-  if (s < 1700) return s < 480 ? 'town' : 'coast';
-  if (s < 2520) return 'town';
+  if (s < 480) return 'town';
+  if (s < CITY.from) return 'coast';
+  if (s < CITY.to) return 'town';
   if (s < 3820) return 'paddy';
   if (s < 4080) return 'town';
   if (s > 5480) return 'town';
   return 'forest';
 }
 
-// ---- 中心線の前計算 ----
-const N = LENGTH + 401;
-const PX = new Float64Array(N), PZ = new Float64Array(N), PY = new Float64Array(N), TH = new Float64Array(N);
+export const MAIN = Path.integrate({ x: 0, y: 6, z: 0, th: 0 }, LENGTH + 400, (u) => interp(CURV, u), (u) => interp(GRADE, u) / 1000);
 
-function interp(tab: [number, number][], s: number): number {
-  for (let i = 1; i < tab.length; i++) {
-    if (s <= tab[i][0]) {
-      const [s0, v0] = tab[i - 1], [s1, v1] = tab[i];
-      return v0 + (v1 - v0) * ((s - s0) / (s1 - s0));
-    }
-  }
-  return tab[tab.length - 1][1];
-}
+export const HIKARI: Route = {
+  id: 'hikari', name: 'ひかり野線', kana: 'ひかりのせん', color: '#1f6fb4', note: '海辺の潮見台から、浜田の町、田んぼと川、トンネルを抜けて山あいの山ノ口へ',
+  path: MAIN, stations: STATIONS, limits: LIMITS, signals: SIGNALS, whistles: WHISTLES, maxKmh: MAX_KMH,
+};
 
-(function build() {
-  let x = 0, z = 0, y = Y0, th = 0;
-  for (let i = 0; i < N; i++) {
-    PX[i] = x; PZ[i] = z; PY[i] = y; TH[i] = th;
-    const k = interp(CURV, i + 0.5);
-    th -= k;
-    const mid = th + k / 2;
-    x += Math.sin(mid); z -= Math.cos(mid);
-    y += interp(GRADE, i + 0.5) / 1000;
-  }
-})();
+// ---- ひかり野線を指す、これまでの名前（地形や町の作りで使う） ----
+export function at(s: number, d = 0): Frame { return MAIN.at(s, d); }
+export const railY = (s: number) => MAIN.at(s).y;
+export const gradeAt = (s: number) => MAIN.gradeAt(s);
+export const curvatureAt = (s: number) => MAIN.curvatureAt(s);
+export function nearest(x: number, z: number): { s: number; d: number } { const r = MAIN.nearest(x, z); return { s: Math.max(0, Math.min(MAIN.length, r.s)), d: r.d }; }
 
-export interface Frame { x: number; y: number; z: number; th: number; dx: number; dz: number; lx: number; lz: number; }
-
-/** s の位置（m）での中心線。d は左向きの横ずれ */
-export function at(s: number, d = 0): Frame {
-  if (s < 0) { // 起点より手前はまっすぐ延ばす
-    const f = at(0, d);
-    return { ...f, x: f.x + f.dx * s, z: f.z + f.dz * s };
-  }
-  const c = Math.min(N - 2, s);
-  const i = Math.floor(c), f = c - i;
-  const th = TH[i] + (TH[i + 1] - TH[i]) * f;
-  const dx = Math.sin(th), dz = -Math.cos(th);
-  const lx = -Math.cos(th), lz = -Math.sin(th);
-  const x = PX[i] + (PX[i + 1] - PX[i]) * f + lx * d;
-  const z = PZ[i] + (PZ[i + 1] - PZ[i]) * f + lz * d;
-  const y = PY[i] + (PY[i + 1] - PY[i]) * f;
-  return { x, y, z, th, dx, dz, lx, lz };
-}
-export const railY = (s: number) => at(s).y;
-export const gradeAt = (s: number) => interp(GRADE, s) / 1000;
-export const curvatureAt = (s: number) => interp(CURV, s);
-
-/** 世界の点から、いちばん近い中心線の s と横ずれ d（左が正）を求める（粗い探索＋詰め） */
-export function nearest(x: number, z: number): { s: number; d: number } {
-  let best = 0, bd = Infinity;
-  for (let i = 0; i < N; i += 10) {
-    const e = (PX[i] - x) ** 2 + (PZ[i] - z) ** 2;
-    if (e < bd) { bd = e; best = i; }
-  }
-  for (let i = Math.max(0, best - 10); i <= Math.min(N - 1, best + 10); i++) {
-    const e = (PX[i] - x) ** 2 + (PZ[i] - z) ** 2;
-    if (e < bd) { bd = e; best = i; }
-  }
-  const f = at(best);
-  return { s: best, d: (x - f.x) * f.lx + (z - f.z) * f.lz };
-}
-
-export function limitAt(s: number): number {
-  let v = MAX_KMH;
-  for (const l of LIMITS) if (s >= l.from && s < l.to) v = Math.min(v, l.kmh);
+export function limitAt(s: number, limits: Limit[] = LIMITS, max = MAX_KMH): number {
+  let v = max;
+  for (const l of limits) if (s >= l.from && s < l.to) v = Math.min(v, l.kmh);
   return v;
 }
 

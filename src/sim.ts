@@ -1,7 +1,5 @@
 // 運転のしくみ（画面に依存しない）。テストしやすいよう純粋な計算だけを置く。
-import {
-  STATIONS, SIGNALS, WHISTLES, TRAIN_LEN, LIMITS, MAX_KMH, limitAt, gradeAt, Signal,
-} from './route';
+import { TRAIN_LEN, limitAt, Signal, Route, HIKARI } from './route';
 
 export const EB = -9; // 非常
 export const NOTCH_MIN = EB, NOTCH_MAX = 5;
@@ -24,6 +22,7 @@ export interface LegScore {
 export interface SimEvent { type: string; text?: string; value?: number; }
 
 export interface Sim {
+  route: Route;
   mode: Mode;
   t: number; s: number; v: number; a: number;
   notch: number; brake: number; power: number; // 実際のブレーキの効き（m/s²）
@@ -48,11 +47,11 @@ const newLeg = (station: number): LegScore => ({
   station, posErr: null, arrErr: null, depErr: null, pos: 0, time: 0, comfort: 20, bonus: 0, penalty: 0, notes: [],
 });
 
-export function createSim(mode: Mode = 'normal'): Sim {
-  const st = STATIONS[0];
+export function createSim(mode: Mode = 'normal', route: Route = HIKARI): Sim {
+  const st = route.stations[0];
   return {
-    mode, t: st.arr, s: st.stop, v: 0, a: 0, notch: -4, brake: 0.5, power: 0,
-    door: 'open', doorT: 0, at: 0, next: 1, sigLimit: MAX_KMH, passedSig: 0,
+    route, mode, t: st.arr, s: st.stop, v: 0, a: 0, notch: -4, brake: 0.5, power: 0,
+    door: 'open', doorT: 0, at: 0, next: 1, sigLimit: route.maxKmh, passedSig: 0,
     ats: 'off', atsT: 0, legs: [], leg: newLeg(1), called: new Set(), announced: false, horned: new Set(),
     stoppedAt: st.arr, served: true, doorOpenedAt: st.arr - 20, jerk: 0, lastA: 0, finished: false,
     events: [], odo: 0,
@@ -62,28 +61,29 @@ export function createSim(mode: Mode = 'normal'): Sim {
 export const kmh = (v: number) => v * 3.6;
 
 export function aspectOf(sig: Signal, sim: Sim): Aspect {
+  if (sig.dyn) return sig.dyn(sim, sim.t);
   if (sig.kind === 'block') return 'G';
   if (sig.kind === 'home') return 'Y';
-  const st = STATIONS[sig.station!];
+  const st = sim.route.stations[sig.station!];
   // 出発信号：発車 10 秒前に青。それまでは赤
   if (sim.t >= st.dep - 10) return 'G';
   return 'R';
 }
 
 export function nextSignal(sim: Sim): { sig: Signal; dist: number } | null {
-  for (const sig of SIGNALS) if (sig.s > sim.s) return { sig, dist: sig.s - sim.s };
+  for (const sig of sim.route.signals) if (sig.s > sim.s) return { sig, dist: sig.s - sim.s };
   return null;
 }
 
 /** 列車全体がかかっている区間の制限速度（最後尾が抜けるまで） */
-export function trackLimit(s: number): number {
-  let v = limitAt(s);
-  for (const l of LIMITS) if (l.from < s && l.to > s - TRAIN_LEN) v = Math.min(v, l.kmh);
+export function trackLimit(s: number, route: Route = HIKARI): number {
+  let v = limitAt(s, route.limits, route.maxKmh);
+  for (const l of route.limits) if (l.from < s && l.to > s - TRAIN_LEN) v = Math.min(v, l.kmh);
   return v;
 }
 
 export function currentLimit(sim: Sim): number {
-  return Math.min(trackLimit(sim.s), sim.sigLimit);
+  return Math.min(trackLimit(sim.s, sim.route), sim.sigLimit);
 }
 
 /** 赤信号に向けた速度の上限（ATS のパターン）m/s */
@@ -93,7 +93,7 @@ export function patternSpeed(dist: number): number {
 
 /** いまの減速度のまま止まるまでの距離 */
 export function brakingDistance(sim: Sim): number {
-  const b = sim.brake + 9.8 * gradeAt(sim.s);
+  const b = sim.brake + 9.8 * sim.route.path.gradeAt(sim.s);
   if (sim.v < 0.05) return 0;
   if (b <= 0.02) return Infinity;
   return (sim.v * sim.v) / (2 * b);
@@ -118,7 +118,7 @@ export function toggleDoor(sim: Sim) {
   if (sim.door === 'closed') {
     if (sim.v > 0.01 || sim.at < 0) return emit(sim, 'msg', '駅の停止位置で止まってから開けます');
     sim.door = 'opening'; sim.doorT = 0; sim.doorOpenedAt = sim.t; sim.served = true; emit(sim, 'door-open');
-    const st = STATIONS[sim.at];
+    const st = sim.route.stations[sim.at];
     if (sim.leg.station === sim.at && sim.leg.posErr === null) {
       const err = sim.s - st.stop;
       sim.leg.posErr = err;
@@ -127,7 +127,7 @@ export function toggleDoor(sim: Sim) {
       sim.leg.arrErr = arr;
       sim.leg.time = Math.max(0, Math.round(30 - Math.max(0, Math.abs(arr) - 3)));
       emit(sim, 'stop-result', undefined, sim.at);
-      if (sim.at === STATIONS.length - 1) finish(sim);
+      if (sim.at === sim.route.stations.length - 1) finish(sim);
     }
   } else if (sim.door === 'open') {
     if (sim.t - sim.doorOpenedAt < 8) return emit(sim, 'msg', 'お客さまの乗り降りを待っています');
@@ -154,7 +154,7 @@ export function pointCall(sim: Sim): string | null {
     else emit(sim, 'call', text, 0);
     return text;
   }
-  for (const l of LIMITS) {
+  for (const l of sim.route.limits) {
     const d = l.from - sim.s;
     if (d > 0 && d < 250) {
       const key = `lim${l.from}`;
@@ -164,8 +164,8 @@ export function pointCall(sim: Sim): string | null {
       return text;
     }
   }
-  if (sim.next < STATIONS.length) {
-    const d = STATIONS[sim.next].stop - sim.s;
+  if (sim.next < sim.route.stations.length) {
+    const d = sim.route.stations[sim.next].stop - sim.s;
     if (d > 0 && d < 400) {
       const key = `stop${sim.next}`;
       const text = '停車！';
@@ -180,11 +180,12 @@ export function pointCall(sim: Sim): string | null {
 
 /** 車内放送 */
 export function announce(sim: Sim): boolean {
-  if (sim.next >= STATIONS.length || sim.at >= 0) return false;
-  const st = STATIONS[sim.next];
+  if (sim.next >= sim.route.stations.length || sim.at >= 0) return false;
+  const st = sim.route.stations[sim.next];
   const d = st.stop - sim.s;
-  const last = sim.next === STATIONS.length - 1;
-  const text = `まもなく${st.name}、${st.name}です。${last ? '終点です。' : ''}お出口は左側です。`;
+  const last = sim.next === sim.route.stations.length - 1;
+  const tr = st.transfer ? `${st.transfer}は、お乗り換えです。` : '';
+  const text = `まもなく${st.name}、${st.name}です。${last ? '終点です。' : ''}${tr}お出口は${st.side === 'R' ? '右' : '左'}側です。`;
   if (d > 250 && d < 1400 && !sim.announced) {
     sim.announced = true; sim.leg.bonus += 5; emit(sim, 'announce', text, 5); return true;
   }
@@ -193,8 +194,9 @@ export function announce(sim: Sim): boolean {
 }
 
 export function horn(sim: Sim) {
-  for (let i = 0; i < WHISTLES.length; i++) {
-    const d = sim.s - WHISTLES[i].s;
+  const W = sim.route.whistles;
+  for (let i = 0; i < W.length; i++) {
+    const d = sim.s - W[i].s;
     if (d > -30 && d < 220 && !sim.horned.has(i)) { sim.horned.add(i); sim.leg.bonus += 3; emit(sim, 'horn', '警笛 OK', 3); return; }
   }
   emit(sim, 'horn');
@@ -230,7 +232,7 @@ export function step(sim: Sim, dt: number) {
   sim.power += (pTarget - sim.power) * Math.min(1, dt / 0.6);
   const power = sim.power;
   const res = 0.012 + 0.00005 * sim.v * sim.v;
-  const g = 9.8 * gradeAt(sim.s);
+  const g = 9.8 * sim.route.path.gradeAt(sim.s);
   let a = power - g - (sim.v > 0.01 || power > 0 ? res : 0);
   const brakeA = sim.brake;
   let v = sim.v + (a - brakeA) * dt;
@@ -256,10 +258,10 @@ export function step(sim: Sim, dt: number) {
     if (brakeA > 0.75) { sim.leg.comfort = Math.max(0, sim.leg.comfort - 6); sim.leg.notes.push('停止時の衝撃が大きい'); emit(sim, 'jolt'); }
     else if (brakeA > 0.5) { sim.leg.comfort = Math.max(0, sim.leg.comfort - 2); }
     sim.stoppedAt = sim.t;
-    if (sim.next < STATIONS.length) {
-      const err = sim.s - STATIONS[sim.next].stop;
+    if (sim.next < sim.route.stations.length) {
+      const err = sim.s - sim.route.stations[sim.next].stop;
       if (err > -60 && err < 30) {
-        if (Math.abs(err) <= 10) { sim.at = sim.next; emit(sim, 'arrive', STATIONS[sim.at].name, err); }
+        if (Math.abs(err) <= 10) { sim.at = sim.next; emit(sim, 'arrive', sim.route.stations[sim.at].name, err); }
         else emit(sim, 'msg', err < 0 ? `停止位置まで あと ${(-err).toFixed(1)} m` : `${err.toFixed(1)} m 行き過ぎ`);
       }
     }
@@ -269,7 +271,7 @@ export function step(sim: Sim, dt: number) {
   if (sim.at >= 0 && sim.v > 0.3) {
     if (!sim.served) { sim.at = -1; }
     else {
-      const st = STATIONS[sim.at];
+      const st = sim.route.stations[sim.at];
       const late = sim.t - st.dep;
       if (sim.at > 0) { sim.legs.push(sim.leg); sim.leg = newLeg(sim.at + 1); }
       sim.leg.depErr = late;
@@ -280,24 +282,25 @@ export function step(sim: Sim, dt: number) {
     }
   }
   // 次の駅を止まらずに過ぎた
-  if (sim.at < 0 && sim.next < STATIONS.length && sim.s > STATIONS[sim.next].stop + 30) {
-    sim.leg.notes.push('停車駅を通過'); sim.leg.penalty += 30; sim.leg.posErr = sim.s - STATIONS[sim.next].stop;
-    emit(sim, 'overrun', STATIONS[sim.next].name);
+  if (sim.at < 0 && sim.next < sim.route.stations.length && sim.s > sim.route.stations[sim.next].stop + 30) {
+    sim.leg.notes.push('停車駅を通過'); sim.leg.penalty += 30; sim.leg.posErr = sim.s - sim.route.stations[sim.next].stop;
+    emit(sim, 'overrun', sim.route.stations[sim.next].name);
     sim.legs.push(sim.leg);
     sim.next++;
     sim.leg = newLeg(sim.next);
-    if (sim.next >= STATIONS.length) { sim.finished = true; emit(sim, 'finish'); }
+    if (sim.next >= sim.route.stations.length) { sim.finished = true; emit(sim, 'finish'); }
   }
 
   // 信号の通過
-  while (sim.passedSig < SIGNALS.length && SIGNALS[sim.passedSig].s <= sim.s) {
-    const sig = SIGNALS[sim.passedSig];
+  const SIG = sim.route.signals;
+  while (sim.passedSig < SIG.length && SIG[sim.passedSig].s <= sim.s) {
+    const sig = SIG[sim.passedSig];
     const asp = aspectOf(sig, sim);
     if (asp === 'R') {
       sim.leg.penalty += 30; sim.leg.notes.push('赤信号を越えた'); sim.ats = 'brake'; sim.atsT = 0;
       emit(sim, 'ats-brake', '停止信号を越えました');
     }
-    sim.sigLimit = asp === 'Y' ? 45 : MAX_KMH;
+    sim.sigLimit = asp === 'Y' ? (sig.caution ? 35 : 45) : sim.route.maxKmh;
     emit(sim, 'pass-signal', asp);
     sim.passedSig++;
   }
@@ -337,7 +340,7 @@ export function totalScore(sim: Sim): number {
   return sim.legs.reduce((a, l) => a + legTotal(l), 0);
 }
 export function rank(sim: Sim): string {
-  const max = (STATIONS.length - 1) * 100;
+  const max = (sim.route.stations.length - 1) * 100;
   const r = totalScore(sim) / max;
   return r >= 0.95 ? 'S' : r >= 0.8 ? 'A' : r >= 0.6 ? 'B' : r >= 0.4 ? 'C' : 'D';
 }
